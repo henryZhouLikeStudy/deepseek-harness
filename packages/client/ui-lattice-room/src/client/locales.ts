@@ -36,6 +36,7 @@ export const zh = {
   'lattice-room.project': '项目',
   'lattice-room.noProject': '无项目',
   'lattice-room.forward': '转发',
+  'lattice-room.noForwardTargets': '无可转发的成员',
   'lattice-room.resetSession': '重置会话',
 } as const
 
@@ -75,6 +76,7 @@ export const en = {
   'lattice-room.project': 'Project',
   'lattice-room.noProject': 'No Project',
   'lattice-room.forward': 'Forward',
+  'lattice-room.noForwardTargets': 'No members to forward to',
   'lattice-room.resetSession': 'Reset session',
 } as const
 

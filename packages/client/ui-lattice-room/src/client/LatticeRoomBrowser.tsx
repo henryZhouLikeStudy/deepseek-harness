@@ -31,6 +31,12 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
   const [forwardingMessage, setForwardingMessage] = useState<{ id: string; text: string; fromChild: SessionId } | null>(null)
   const [providers, setProviders] = useState<SubagentProvider[] | undefined>(undefined)
   const [providersError, setProvidersError] = useState<string | undefined>(undefined)
+  const idSeq = useRef(0)
+  const nextMsgSuffix = () => `${Date.now()}-${idSeq.current++}`
+
+  useEffect(() => {
+    setForwardingMessage(null)
+  }, [activeRoom?.id])
 
   useEffect(() => {
     let cancelled = false
@@ -152,7 +158,7 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
     if (!activeRoom || !taskInput.trim()) return
     if (activeRoom.members.length === 0) {
       actions.sendMessage(activeRoom.id, {
-        id: `msg-${Date.now()}-empty`,
+        id: `msg-${nextMsgSuffix()}-empty`,
         sender: 'system',
         kind: 'status',
         text: t('lattice-room.noMembers'),
@@ -162,7 +168,7 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
       return
     }
     const taskMessage = {
-      id: `msg-${Date.now()}`,
+      id: `msg-${nextMsgSuffix()}`,
       sender: 'user',
       kind: 'task' as const,
       text: taskInput,
@@ -179,7 +185,7 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
         if (childSessionId !== undefined) actions.setMemberChildSession(activeRoom.id, memberIndex, childSessionId)
         if (children.length > 0) actions.addPendingChildren(activeRoom.id, children)
         actions.sendMessage(activeRoom.id, {
-          id: `msg-status-${Date.now()}-${member.name}`,
+          id: `msg-status-${nextMsgSuffix()}-${member.name}`,
           sender: 'system',
           kind: 'status',
           text,
@@ -187,7 +193,7 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
         })
       } catch (error) {
         actions.sendMessage(activeRoom.id, {
-          id: `msg-status-err-${Date.now()}-${member.name}`,
+          id: `msg-status-err-${nextMsgSuffix()}-${member.name}`,
           sender: 'system',
           kind: 'status',
           text: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
@@ -477,33 +483,58 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
                       {(() => {
                         const forward = forwardingMessage
                         if (forward === null || forward.id !== msg.id) return null
+                        const targets = activeRoom.members.filter((member): member is RoomMember & { childSessionId: SessionId } =>
+                          member.childSessionId !== undefined && member.childSessionId !== forward.fromChild)
                         return (
-                          <div style={{ marginTop: '0.5rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                            {activeRoom.members
-                              .filter((member): member is RoomMember & { childSessionId: SessionId } =>
-                                member.childSessionId !== undefined && member.childSessionId !== forward.fromChild)
-                              .map(member => (
+                          <div style={{ marginTop: '0.5rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                            {targets.length === 0 ? (
+                              <span style={{ fontSize: '0.75rem', color: '#666' }}>{t('lattice-room.noForwardTargets')}</span>
+                            ) : (
+                              <>
+                                {targets.map(member => (
+                                  <button
+                                    key={member.childSessionId}
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      void (async () => {
+                                        const ok = await relay(forward.fromChild, member.childSessionId, forward.text)
+                                        actions.sendMessage(activeRoom.id, {
+                                          id: `msg-forward-${nextMsgSuffix()}`,
+                                          sender: 'system',
+                                          kind: 'status',
+                                          text: ok ? `Forwarded to ${member.name}` : `Forward to ${member.name} failed`,
+                                          createdAt: Date.now(),
+                                        })
+                                        setForwardingMessage(null)
+                                      })()
+                                    }}
+                                    style={{
+                                      border: '1px solid #ccc',
+                                      borderRadius: '4px',
+                                      padding: '0.25rem 0.5rem',
+                                      cursor: 'pointer',
+                                      background: '#fff',
+                                      fontSize: '0.75rem',
+                                    }}
+                                  >
+                                    {member.name}
+                                  </button>
+                                ))}
                                 <button
-                                  key={member.childSessionId}
-                                  onClick={(e) => {
-                                    e.stopPropagation()
-                                    void (async () => {
-                                      const ok = await relay(forward.fromChild, member.childSessionId, forward.text)
-                                      actions.sendMessage(activeRoom.id, {
-                                        id: `msg-forward-${Date.now()}`,
-                                        sender: 'system',
-                                        kind: 'status',
-                                        text: ok ? `Forwarded to ${member.name}` : `Forward to ${member.name} failed`,
-                                        createdAt: Date.now(),
-                                      })
-                                      setForwardingMessage(null)
-                                    })()
+                                  onClick={(e) => { e.stopPropagation(); setForwardingMessage(null) }}
+                                  style={{
+                                    border: '1px solid #ccc',
+                                    borderRadius: '4px',
+                                    padding: '0.25rem 0.5rem',
+                                    cursor: 'pointer',
+                                    background: '#fff',
+                                    fontSize: '0.75rem',
                                   }}
-                                  style={{ border: '1px solid #ccc', borderRadius: '4px', padding: '0.25rem 0.5rem', cursor: 'pointer', background: '#fff', fontSize: '0.75rem' }}
                                 >
-                                  {member.name}
+                                  {t('lattice-room.cancel')}
                                 </button>
-                              ))}
+                              </>
+                            )}
                           </div>
                         )
                       })()}
