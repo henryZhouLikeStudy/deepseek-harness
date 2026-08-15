@@ -1,7 +1,7 @@
 /** Lattice room browser component. */
 import { useEffect, useRef, useState } from 'react'
 import type { LatticeRoomProps } from './contract/slots.ts'
-import type { Room, RoomMember, SubagentProvider } from './stores.ts'
+import type { Room, RoomKind, RoomMember, SubagentProvider } from './stores.ts'
 import { Button, Input } from '@deepseek-ai/dsh-client-ui-primitives'
 import clsx from 'clsx'
 
@@ -14,13 +14,13 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
   const activeRoom = state.activeRoomId ? state.rooms[state.activeRoomId] : null
 
   const sessionsById = useSessions(s => s.byId)
-  const currentSessionId = useSessions(s => s.current)
 
   const [showCreateDialog, setShowCreateDialog] = useState(false)
   const [newRoomTitle, setNewRoomTitle] = useState('')
   const [taskInput, setTaskInput] = useState('')
   const [selectedProvider, setSelectedProvider] = useState<SubagentProvider | null>(null)
   const [newMemberName, setNewMemberName] = useState('')
+  const [newRoomKind, setNewRoomKind] = useState<RoomKind>('group')
   const [providers, setProviders] = useState<SubagentProvider[] | undefined>(undefined)
   const [providersError, setProvidersError] = useState<string | undefined>(undefined)
 
@@ -46,8 +46,6 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
     if (!activeRoom) return
     const pending = state.pending[activeRoom.id] ?? []
     for (const child of pending) {
-      // Only stream results while the room's parent session is still current.
-      if (child.parentSessionId !== currentSessionId) continue
       const summary = sessionsById[child.childSessionId]
       if (!summary || summary.running) continue
       // Remove synchronously so a later effect pass does not reprocess this child.
@@ -86,24 +84,26 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
         }
       })()
     }
-  }, [activeRoom, state.pending, sessionsById, currentSessionId, actions, fetchChildResult, t])
+  }, [activeRoom, state.pending, sessionsById, actions, fetchChildResult, t])
 
   const handleCreateRoom = () => {
     if (!newRoomTitle.trim()) return
     const room: Room = {
       id: `room-${Date.now()}`,
       title: newRoomTitle,
-      kind: 'group',
+      kind: newRoomKind,
       members: [],
       messages: [],
     }
     actions.createRoom(room)
     setNewRoomTitle('')
+    setNewRoomKind('group')
     setShowCreateDialog(false)
   }
 
   const handleAddMember = () => {
     if (!activeRoom || !selectedProvider) return
+    if (activeRoom.kind === '1:1' && activeRoom.members.length >= 1) return
     const member: RoomMember = { provider: selectedProvider, name: newMemberName.trim() || `${selectedProvider}-agent` }
     actions.addMember(activeRoom.id, member)
     setSelectedProvider(null)
@@ -163,6 +163,14 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
             placeholder={t('lattice-room.roomTitle')}
             style={{ marginBottom: '0.5rem' }}
           />
+          <select
+            value={newRoomKind}
+            onChange={(e) => setNewRoomKind(e.target.value as RoomKind)}
+            style={{ padding: '0.25rem', marginBottom: '0.5rem' }}
+          >
+            <option value="group">{t('lattice-room.group')}</option>
+            <option value="1:1">{t('lattice-room.oneOnOne')}</option>
+          </select>
           <div style={{ display: 'flex', gap: '0.5rem' }}>
             <Button onClick={handleCreateRoom}>{t('lattice-room.create')}</Button>
             <Button onClick={() => setShowCreateDialog(false)}>{t('lattice-room.cancel')}</Button>
@@ -202,9 +210,25 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
                 borderRadius: '4px',
                 marginBottom: '0.25rem',
                 backgroundColor: activeRoom?.id === room.id ? '#e0e0e0' : 'transparent',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '0.25rem',
               }}
             >
-              {room.title}
+              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {room.title}
+                <span style={{ fontSize: '0.7rem', color: '#999', marginLeft: '0.25rem' }}>
+                  {room.kind === '1:1' ? t('lattice-room.oneOnOne') : t('lattice-room.group')}
+                </span>
+              </span>
+              <button
+                onClick={(e) => { e.stopPropagation(); actions.deleteRoom(room.id) }}
+                style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#999' }}
+                aria-label={t('lattice-room.delete')}
+              >
+                ×
+              </button>
             </div>
           ))}
         </div>
