@@ -1,8 +1,8 @@
 /** Lattice room plugin, browser half. */
-import type { ClientContext, SubagentAddress } from '@deepseek-ai/dsh-client-runtime/client'
+import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type { LatticeRoomInjected } from './contract/slots.ts'
-import { createLatticeRoomStore, type SubagentProvider, type RoomMember } from './stores.ts'
+import { createLatticeRoomStore, type SubagentProvider } from './stores.ts'
 import { LatticeRoomBrowser } from './LatticeRoomBrowser.tsx'
 import { en, zh, type LatticeRoomKey, NS } from './locales.ts'
 

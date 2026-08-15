@@ -12,5 +12,4 @@ jobs:
         with:
           node-version: 24
       - run: pnpm install --no-frozen-lockfile
-      - run: pnpm exec tsc -b tsconfig.host.json --pretty false
-      - run: pnpm exec tsc -b tsconfig.client.json --pretty false
+      - run: pnpm run typecheck
