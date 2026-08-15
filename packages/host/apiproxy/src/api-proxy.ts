@@ -2824,18 +2824,25 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
             })
           }
         }
-        try {
-          const runs = await Promise.all(items.map(async (item) => {
+        // Start every item concurrently but capture each item's own outcome, so
+        // a failure reports the exact provider instead of parsing the provider's
+        // free-form message back out of the error text.
+        const outcomes = await Promise.all(items.map(async (item) => {
+          try {
             const run = await ctx.subagents.start(item.provider, {
               label: item.name,
               prompt: [{ type: 'text', text: item.prompt }],
               parent: parentAgent,
               signal: signal ?? new AbortController().signal,
             })
-            return { childSessionId: run.id, provider: item.provider }
-          }))
-          return ok(request, runs)
-        } catch (error: unknown) {
+            return { ok: true as const, childSessionId: run.id, provider: item.provider }
+          } catch (error: unknown) {
+            return { ok: false as const, provider: item.provider, error }
+          }
+        }))
+
+        const failure = outcomes.find((outcome): outcome is { ok: false; provider: string; error: unknown } => !outcome.ok)
+        if (failure !== undefined) {
           if (signal?.aborted) {
             return err(request, {
               code: 'cancelled',
@@ -2843,20 +2850,22 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
               details: {},
             })
           }
-          if (error instanceof SubagentError && error.code === 'NO_PROVIDER') {
-            const provider = items.find(item => item.provider === error.message.match(/"([^"]+)"/)?.[1])?.provider ?? ''
+          if (failure.error instanceof SubagentError && failure.error.code === 'NO_PROVIDER') {
             return err(request, {
               code: 'lattice-provider-unavailable',
-              message: error.message,
-              details: { provider },
+              message: failure.error.message,
+              details: { provider: failure.provider },
             })
           }
           return err(request, {
             code: 'internal',
-            message: error instanceof Error ? error.message : 'lattice group dispatch failed',
+            message: failure.error instanceof Error ? failure.error.message : 'lattice group dispatch failed',
             details: {},
           })
         }
+
+        const runs = outcomes.flatMap(outcome => outcome.ok ? [{ childSessionId: outcome.childSessionId, provider: outcome.provider }] : [])
+        return ok(request, runs)
       },
     },
 

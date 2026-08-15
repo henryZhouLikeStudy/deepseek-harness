@@ -20,6 +20,7 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
   const [newRoomTitle, setNewRoomTitle] = useState('')
   const [taskInput, setTaskInput] = useState('')
   const [selectedProvider, setSelectedProvider] = useState<SubagentProvider | null>(null)
+  const [newMemberName, setNewMemberName] = useState('')
   const [providers, setProviders] = useState<SubagentProvider[] | undefined>(undefined)
   const [providersError, setProvidersError] = useState<string | undefined>(undefined)
 
@@ -103,9 +104,10 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
 
   const handleAddMember = () => {
     if (!activeRoom || !selectedProvider) return
-    const member: RoomMember = { provider: selectedProvider, name: `${selectedProvider}-agent` }
+    const member: RoomMember = { provider: selectedProvider, name: newMemberName.trim() || `${selectedProvider}-agent` }
     actions.addMember(activeRoom.id, member)
     setSelectedProvider(null)
+    setNewMemberName('')
   }
 
   const handleSendTask = async () => {
@@ -119,8 +121,10 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
     }
     actions.sendMessage(activeRoom.id, taskMessage)
 
-    // Send task to each member
-    for (const member of activeRoom.members) {
+    // Dispatch to every member concurrently; each member posts its own status
+    // message once its task is accepted, so a slow provider does not block the
+    // rest of the room.
+    await Promise.all(activeRoom.members.map(async (member) => {
       try {
         const { text, children } = await sendTaskToMember(activeRoom.id, member, taskInput)
         if (children.length > 0) actions.addPendingChildren(activeRoom.id, children)
@@ -133,14 +137,14 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
         })
       } catch (error) {
         actions.sendMessage(activeRoom.id, {
-          id: `msg-${Date.now()}-err`,
+          id: `msg-status-err-${Date.now()}-${member.name}`,
           sender: 'system',
           kind: 'status',
           text: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
           createdAt: Date.now(),
         })
       }
-    }
+    }))
     setTaskInput('')
   }
 
@@ -231,6 +235,12 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
                       </button>
                     </span>
                   ))}
+                  <Input
+                    value={newMemberName}
+                    onChange={(e) => setNewMemberName(e.target.value)}
+                    placeholder={t('lattice-room.memberName')}
+                    style={{ padding: '0.25rem', width: '10rem' }}
+                  />
                   <select
                     value={selectedProvider ?? ''}
                     onChange={(e) => setSelectedProvider(e.target.value as SubagentProvider)}
