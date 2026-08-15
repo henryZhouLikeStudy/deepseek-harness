@@ -111,7 +111,7 @@ export function apply(ctx: ClientContext): void {
     },
     sendTaskToMember: async (_roomId, member, task) => {
       const parentSessionId = currentSessionId()
-      if (parentSessionId === undefined) return { text: `[${member.name}] no current session`, children: [] }
+      if (parentSessionId === undefined) return { text: `[${member.name}] no current session`, children: [] as PendingChild[] }
       const response = await connection.api.lattice.groupDispatch({
         parentSessionId,
         items: [{
@@ -122,7 +122,7 @@ export function apply(ctx: ClientContext): void {
         }],
       })
       if (!response.result.ok) {
-        return { text: `[${member.name}] dispatch failed: ${response.result.error.message}`, children: [] }
+        return { text: `[${member.name}] dispatch failed: ${response.result.error.message}`, children: [] as PendingChild[] }
       }
       const children: PendingChild[] = response.result.value.map(r => ({
         memberName: member.name,
