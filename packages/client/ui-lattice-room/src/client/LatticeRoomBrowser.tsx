@@ -112,7 +112,7 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
   }
 
   const handleOpenContact = (provider: SubagentProvider) => {
-    const existing = rooms.find(room => room.kind === '1:1' && room.members.length === 1 && room.members[0].provider === provider)
+    const existing = rooms.find(room => room.kind === '1:1' && room.members.length === 1 && room.members[0]?.provider === provider)
     if (existing) {
       actions.openRoom(existing.id)
       return
