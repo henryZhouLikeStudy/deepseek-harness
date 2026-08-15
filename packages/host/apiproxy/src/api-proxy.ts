@@ -2836,7 +2836,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
               mode: 'continuable',
             }, signal)
             if (verified.error !== undefined) {
-              return { ok: false as const, provider: item.provider, error: verified.error }
+              return { ok: false as const, provider: item.provider, error: verified.error, rpcError: true as const }
             }
             try {
               await ctx.subagents.followup(parentAgent, item.childSessionId, [{ type: 'text', text: item.prompt }], {
@@ -2876,6 +2876,9 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
 
         const failure = outcomes.find((outcome): outcome is { ok: false; provider: string; error: unknown } => !outcome.ok)
         if (failure !== undefined) {
+          if ((failure as { rpcError?: true }).rpcError === true) {
+            return err(request, failure.error as RpcError)
+          }
           if (signal?.aborted) {
             return err(request, {
               code: 'cancelled',
@@ -2911,6 +2914,15 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
             code: 'lattice-parent-not-found',
             message: `parent session "${parentSessionId}" is not live`,
             details: { parentSessionId },
+          })
+        }
+        const children = await ctx.subagents.listChildren(parentSessionId, signal)
+        const fromEntry = children.find(child => child.id === fromChildSessionId)
+        if (fromEntry === undefined || fromEntry.kind !== 'child') {
+          return err(request, {
+            code: 'subagent-not-found',
+            message: `session "${fromChildSessionId}" is not a direct child of "${parentSessionId}"`,
+            details: { parentSessionId, childSessionId: fromChildSessionId },
           })
         }
         const verified = await catalogChild(ctx, { parentSessionId, childSessionId: toChildSessionId, mode: 'continuable' }, signal)
