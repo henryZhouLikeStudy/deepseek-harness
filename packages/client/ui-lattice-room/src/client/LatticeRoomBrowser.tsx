@@ -102,12 +102,13 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
     // Send task to each member
     for (const member of activeRoom.members) {
       try {
-        const status = await sendTaskToMember(activeRoom.id, member, taskInput)
+        const { text, children } = await sendTaskToMember(activeRoom.id, member, taskInput)
+        if (children.length > 0) actions.addPendingChildren(activeRoom.id, children)
         actions.sendMessage(activeRoom.id, {
           id: `msg-status-${Date.now()}-${member.name}`,
           sender: 'system',
           kind: 'status',
-          text: status,
+          text,
           createdAt: Date.now(),
         })
       } catch (error) {

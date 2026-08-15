@@ -3,7 +3,7 @@ import type { ClientContext, SessionId } from '@deepseek-ai/dsh-client-runtime/c
 import type { ConnectionHandle, ContentBlock, SessionEvent } from '@deepseek-ai/dsh-client-connection/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type { LatticeRoomInjected } from './contract/slots.ts'
-import { createLatticeRoomStore, type SubagentProvider } from './stores.ts'
+import { createLatticeRoomStore, type SubagentProvider, type PendingChild } from './stores.ts'
 import { LatticeRoomBrowser } from './LatticeRoomBrowser.tsx'
 import { en, zh, type LatticeRoomKey, NS } from './locales.ts'
 
@@ -110,25 +110,22 @@ export function apply(ctx: ClientContext): void {
     },
     sendTaskToMember: async (roomId, member, task) => {
       const parentSessionId = currentSessionId()
-      if (parentSessionId === undefined) return `[${member.name}] no current session`
+      if (parentSessionId === undefined) return { text: `[${member.name}] no current session`, children: [] }
       const response = await connection.api.lattice.groupDispatch({
         parentSessionId,
         items: [{ provider: member.provider, name: member.name, prompt: task }],
       })
       if (!response.result.ok) {
-        return `[${member.name}] dispatch failed: ${response.result.error.message}`
+        return { text: `[${member.name}] dispatch failed: ${response.result.error.message}`, children: [] }
       }
-      store.actions.addPendingChildren(
-        roomId,
-        response.result.value.map((r) => ({
-          memberName: member.name,
-          childSessionId: r.childSessionId,
-          provider: r.provider,
-          parentSessionId,
-        })),
-      )
+      const children: PendingChild[] = response.result.value.map((r) => ({
+        memberName: member.name,
+        childSessionId: r.childSessionId,
+        provider: r.provider,
+        parentSessionId,
+      }))
       await openDispatchedChildren(parentSessionId, response.result.value)
-      return `[${member.name}] dispatched to ${response.result.value.map(r => r.childSessionId).join(', ')}`
+      return { text: `[${member.name}] dispatched to ${response.result.value.map(r => r.childSessionId).join(', ')}`, children }
     },
     fetchChildResult: async (parentSessionId, childSessionId) => {
       const response = await connection.api.subagents.history({

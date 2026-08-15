@@ -5,7 +5,7 @@
  */
 import type { SubagentAddress, SessionId } from '@deepseek-ai/dsh-client-runtime/client'
 import type { PropsLocale, PropsRuntime, PropsStore } from '@deepseek-ai/dsh-client-ui-slots'
-import type { SubagentProvider, RoomMember } from '../stores.ts'
+import type { SubagentProvider, RoomMember, PendingChild } from '../stores.ts'
 // Type-only: pull the sidebar owner SlotMap merges into this program.
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 
@@ -22,7 +22,7 @@ export interface LatticeRoomInjected {
    * return a dispatch status string. The final assistant output is streamed
    * back separately via {@link fetchChildResult}.
    */
-  sendTaskToMember: (roomId: string, member: RoomMember, task: string) => Promise<string>
+  sendTaskToMember: (roomId: string, member: RoomMember, task: string) => Promise<{ text: string; children: PendingChild[] }>
   /**
    * Read a finished child's transcript and extract its final assistant text.
    * Returns undefined when the child produced no text output.
