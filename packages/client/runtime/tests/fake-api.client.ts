@@ -175,6 +175,7 @@ export class FakeApiClient implements IApiClient {
   }
 
   readonly lattice: IApiClient['lattice'] = {
+    listProviders: (payload: unknown) => this.record('lattice.listProviders', payload, Promise.resolve(ok([]))),
     groupDispatch: (payload: unknown) => this.record('lattice.groupDispatch', payload, Promise.resolve(ok([]))),
   }
 

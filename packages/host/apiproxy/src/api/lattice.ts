@@ -29,6 +29,15 @@ export interface LatticeDispatchResult {
 /** Lattice-domain unary methods (the map keys lattice.* of RpcMethodMap). */
 export interface LatticeApi {
   /**
+   * Enumerate the names of subagent providers currently registered with the
+   * host. The roster is dynamic: providers are added or removed as the host
+   * composition changes.
+   */
+  listProviders(
+    request: RpcRequest<{}>,
+  ): Promise<RpcResponse<string[]>>
+
+  /**
    * Start a batch of one-shot subagent runs under one live parent session.
    * Each item selects its provider by name; failures fail the whole batch so
    * the caller receives either a complete roster or a typed error.

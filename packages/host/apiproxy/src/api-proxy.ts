@@ -2800,6 +2800,10 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
     },
 
     lattice: {
+      listProviders(request) {
+        return Promise.resolve(ok(request, ctx.subagents.list()))
+      },
+
       async groupDispatch(request, signal) {
         const { parentSessionId, items } = request.payload
         const parentAgent = ctx.agents.get(parentSessionId)

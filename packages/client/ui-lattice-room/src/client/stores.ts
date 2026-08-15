@@ -4,8 +4,11 @@
  */
 import { defineStore, type EngineStoreHandle, type SessionId } from '@deepseek-ai/dsh-client-runtime/client'
 
-/** Known subagent provider names. */
-export type SubagentProvider = 'claude-code' | 'codex' | 'acp' | 'dsh-sdk' | 'in-process' | 'spawn' | 'fork'
+/**
+ * Subagent provider name. The roster is now fetched from the host, so the
+ * type is a plain string rather than a closed union.
+ */
+export type SubagentProvider = string
 
 /** Room kind: group chat or 1:1. */
 export type RoomKind = 'group' | '1:1'

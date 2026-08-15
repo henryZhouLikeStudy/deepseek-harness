@@ -1,5 +1,5 @@
 /** Lattice room browser component. */
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { LatticeRoomProps } from './contract/slots.ts'
 import type { Room, RoomMember, SubagentProvider } from './stores.ts'
 import { Button, Input } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -7,6 +7,8 @@ import clsx from 'clsx'
 
 export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
   const { useStore, actions, listProviders, openSubagent, sendTaskToMember, fetchChildResult, useSessions, t } = props
+  const listProvidersRef = useRef(listProviders)
+  listProvidersRef.current = listProviders
   const state = useStore(s => s)
   const rooms = Object.values(state.rooms)
   const activeRoom = state.activeRoomId ? state.rooms[state.activeRoomId] : null
@@ -18,8 +20,26 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
   const [newRoomTitle, setNewRoomTitle] = useState('')
   const [taskInput, setTaskInput] = useState('')
   const [selectedProvider, setSelectedProvider] = useState<SubagentProvider | null>(null)
+  const [providers, setProviders] = useState<SubagentProvider[] | undefined>(undefined)
+  const [providersError, setProvidersError] = useState<string | undefined>(undefined)
 
-  const providers = listProviders()
+  useEffect(() => {
+    let cancelled = false
+    listProvidersRef.current()
+      .then((list) => {
+        if (cancelled) return
+        setProviders(list)
+        setProvidersError(undefined)
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return
+        setProviders([])
+        setProvidersError(error instanceof Error ? error.message : 'Unknown error')
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     if (!activeRoom) return
@@ -149,16 +169,22 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
       <div style={{ display: 'flex', flex: 1, gap: '1rem', overflow: 'hidden' }}>
         <div style={{ width: '200px', borderRight: '1px solid #ccc', paddingRight: '1rem', overflowY: 'auto' }}>
           <h3>{t('lattice-room.contacts')}</h3>
-          {providers.map(provider => (
-            <div
-              key={provider}
-              onClick={() => openSubagent(provider, `${provider}-agent`)}
-              style={{ padding: '0.5rem', cursor: 'pointer', borderRadius: '4px', marginBottom: '0.25rem' }}
-              className={clsx('contact-item')}
-            >
-              {provider}
-            </div>
-          ))}
+          {providers === undefined ? (
+            <p style={{ fontSize: '0.875rem', color: '#666' }}>{t('lattice-room.loadingProviders')}</p>
+          ) : providers.length === 0 ? (
+            <p style={{ fontSize: '0.875rem', color: '#666' }}>{providersError ?? t('lattice-room.noProviders')}</p>
+          ) : (
+            providers.map(provider => (
+              <div
+                key={provider}
+                onClick={() => openSubagent(provider, `${provider}-agent`)}
+                style={{ padding: '0.5rem', cursor: 'pointer', borderRadius: '4px', marginBottom: '0.25rem' }}
+                className={clsx('contact-item')}
+              >
+                {provider}
+              </div>
+            ))
+          )}
 
           <h3 style={{ marginTop: '1rem' }}>Rooms</h3>
           {rooms.length === 0 && <p style={{ fontSize: '0.875rem', color: '#666' }}>{t('lattice-room.noRooms')}</p>}
@@ -208,10 +234,11 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
                   <select
                     value={selectedProvider ?? ''}
                     onChange={(e) => setSelectedProvider(e.target.value as SubagentProvider)}
+                    disabled={providers === undefined}
                     style={{ padding: '0.25rem' }}
                   >
                     <option value="">{t('lattice-room.selectProvider')}</option>
-                    {providers.map(p => (
+                    {(providers ?? []).map(p => (
                       <option key={p} value={p}>{p}</option>
                     ))}
                   </select>

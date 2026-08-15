@@ -67,7 +67,10 @@ import {
   subagentListValueSchema,
   subagentPromptValueSchema,
 } from '../api/subagents.schema.ts'
-import { latticeGroupDispatchValueSchema } from '../api/lattice.schema.ts'
+import {
+  latticeGroupDispatchValueSchema,
+  latticeListProvidersValueSchema,
+} from '../api/lattice.schema.ts'
 
 /**
  * Client consumption face of the contract (shape a): same domain tree as ApiProxy, but unary
@@ -107,6 +110,7 @@ export interface IApiClient {
     interrupt(payload: RequestPayload<'subagent.interrupt'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'subagent.interrupt'>>>
   }
   lattice: {
+    listProviders(payload: RequestPayload<'lattice.listProviders'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'lattice.listProviders'>>>
     groupDispatch(payload: RequestPayload<'lattice.groupDispatch'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'lattice.groupDispatch'>>>
   }
   host: {
@@ -190,6 +194,7 @@ const UNARY_VALUE_SCHEMAS: { [K in keyof RpcMethodMap]: z.ZodType<Wire<ResponseV
   'subagent.history': subagentHistoryValueSchema,
   'subagent.prompt': subagentPromptValueSchema,
   'subagent.interrupt': subagentInterruptValueSchema,
+  'lattice.listProviders': latticeListProvidersValueSchema,
   'lattice.groupDispatch': latticeGroupDispatchValueSchema,
   'host.describe': hostDescribeValueSchema,
   'host.pickDirectory': hostPickDirectoryValueSchema,
@@ -437,6 +442,7 @@ export abstract class AbstractApiClient implements IApiClient {
   }
 
   readonly lattice: IApiClient['lattice'] = {
+    listProviders: (payload, signal) => this.callUnary('lattice.listProviders', payload, signal),
     groupDispatch: (payload, signal) => this.callUnary('lattice.groupDispatch', payload, signal),
   }
 

@@ -4,8 +4,8 @@ import type { RoomMember, SubagentProvider, PendingChild } from './stores.ts'
 
 /** Injected callbacks for the lattice room browser. */
 export interface LatticeRoomInjected {
-  listProviders: () => SubagentProvider[]
-  openSubagent: (provider: SubagentProvider, name: string) => void
+  listProviders: () => Promise<SubagentProvider[]>
+  openSubagent: (provider: SubagentProvider, name: string) => Promise<void>
   refreshSubagents: () => void
   sendTaskToMember: (roomId: string, member: RoomMember, task: string) => Promise<{ text: string; children: PendingChild[] }>
   fetchChildResult: (parentSessionId: SessionId, childSessionId: SessionId) => Promise<string | undefined>

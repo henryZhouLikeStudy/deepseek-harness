@@ -78,7 +78,7 @@ Successfully fixed and completed the `packages/client/ui-lattice-room` plugin fo
 - **Locale**: Fixed namespace to 'lattice-room' (kebab-case)
 
 ### 4. Product Logic Implementation
-- **listProviders**: Returns static array of official provider names
+- **listProviders**: Fetches the registered provider roster from the host via `connection.api.lattice.listProviders`
 - **openSubagent**: Constructs SubagentAddress and calls ctx.sessions.openSubagent
 - **sendTaskToMember**: Opens subagent, refreshes catalog, returns status string
 - **Room management**: Full CRUD with persistent store
@@ -95,7 +95,7 @@ Successfully fixed and completed the `packages/client/ui-lattice-room` plugin fo
 
 ## Assumptions & Design Decisions
 
-1. **Provider Discovery**: Since client has no direct provider enumeration API, used documented official list (claude-code, codex, acp, dsh-sdk, in-process, spawn, fork)
+1. **Provider Discovery**: The provider roster is fetched dynamically from the host; the UI falls back to an empty list if the host call fails.
 
 2. **Task Dispatch**: Opens/refreshes subagent via sessions API; actual prompt delivery would require additional host-side coordination (beyond client scope)
 

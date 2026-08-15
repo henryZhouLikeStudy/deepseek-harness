@@ -90,9 +90,10 @@ export function apply(ctx: ClientContext): void {
   }
 
   const injected = (): LatticeRoomInjected => ({
-    listProviders: (): SubagentProvider[] => {
-      // Official provider roster (the client cannot enumerate host providers yet).
-      return ['claude-code', 'codex', 'acp', 'dsh-sdk', 'in-process', 'spawn', 'fork']
+    listProviders: async (): Promise<SubagentProvider[]> => {
+      const response = await connection.api.lattice.listProviders({})
+      if (!response.result.ok) return []
+      return response.result.value as SubagentProvider[]
     },
     openSubagent: async (provider, name) => {
       const parentSessionId = currentSessionId()

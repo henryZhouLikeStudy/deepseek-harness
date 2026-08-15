@@ -39,6 +39,7 @@ export interface RpcMethodMap {
   'subagent.history': SubagentsApi['history']
   'subagent.prompt': SubagentsApi['prompt']
   'subagent.interrupt': SubagentsApi['interrupt']
+  'lattice.listProviders': LatticeApi['listProviders']
   'lattice.groupDispatch': LatticeApi['groupDispatch']
   'host.describe': HostApi['describe']
   'host.pickDirectory': HostApi['pickDirectory']

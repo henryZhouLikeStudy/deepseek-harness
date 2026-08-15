@@ -3096,6 +3096,7 @@ export class FixtureApiClient extends AbstractApiClient {
       case 'subagent.history': return this.api.subagents.history(request)
       case 'subagent.prompt': return this.api.subagents.prompt(request, signal)
       case 'subagent.interrupt': return this.api.subagents.interrupt(request)
+      case 'lattice.listProviders': return this.api.lattice.listProviders(request)
       case 'lattice.groupDispatch': return this.api.lattice.groupDispatch(request, signal)
       case 'host.describe': return this.api.host.describe(request)
       case 'host.pickDirectory': return this.api.host.pickDirectory(request, new AbortController().signal)

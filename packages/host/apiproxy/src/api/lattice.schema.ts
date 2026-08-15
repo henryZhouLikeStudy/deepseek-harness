@@ -24,5 +24,11 @@ export const latticeDispatchResultSchema = z.object({
   provider: z.string().min(1),
 }) satisfies z.ZodType<Wire<ResponseValue<'lattice.groupDispatch'>[number]>>
 
+/** lattice.listProviders request payload. */
+export const latticeListProvidersRequestSchema = z.object({}) satisfies z.ZodType<Wire<RequestPayload<'lattice.listProviders'>>>
+
+/** lattice.listProviders response value: registered provider names in host order. */
+export const latticeListProvidersValueSchema = z.array(z.string().min(1)) satisfies z.ZodType<Wire<ResponseValue<'lattice.listProviders'>>>
+
 /** lattice.groupDispatch response value. */
 export const latticeGroupDispatchValueSchema = z.array(latticeDispatchResultSchema) satisfies z.ZodType<Wire<ResponseValue<'lattice.groupDispatch'>>>
