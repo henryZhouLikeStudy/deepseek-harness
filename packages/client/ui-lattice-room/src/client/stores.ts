@@ -72,6 +72,7 @@ type LatticeRoomActions = {
   openRoom: (draft: LatticeRoomState, roomId: string) => void
   addMember: (draft: LatticeRoomState, roomId: string, member: RoomMember) => void
   removeMember: (draft: LatticeRoomState, roomId: string, memberIndex: number) => void
+  renameMember: (draft: LatticeRoomState, roomId: string, memberIndex: number, name: string) => void
   sendMessage: (draft: LatticeRoomState, roomId: string, message: RoomMessage) => void
   setContacts: (draft: LatticeRoomState, contacts: Contact[]) => void
   deleteRoom: (draft: LatticeRoomState, roomId: string) => void
@@ -112,6 +113,12 @@ export function createLatticeRoomStore(): EngineStoreHandle<LatticeRoomState, La
         const room = d.rooms[roomId]
         if (room && room.members[memberIndex]) {
           room.members.splice(memberIndex, 1)
+        }
+      },
+      renameMember: (d, roomId: string, memberIndex: number, name: string) => {
+        const room = d.rooms[roomId]
+        if (room && room.members[memberIndex]) {
+          room.members[memberIndex].name = name
         }
       },
       sendMessage: (d, roomId: string, message: RoomMessage) => {

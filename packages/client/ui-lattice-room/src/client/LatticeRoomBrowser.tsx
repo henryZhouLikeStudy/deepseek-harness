@@ -24,6 +24,7 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
   const [newMemberName, setNewMemberName] = useState('')
   const [newRoomKind, setNewRoomKind] = useState<RoomKind>('group')
   const [newRoomProject, setNewRoomProject] = useState<{ id: string; title: string } | null>(null)
+  const [editingMember, setEditingMember] = useState<{ index: number; name: string } | null>(null)
   const [providers, setProviders] = useState<SubagentProvider[] | undefined>(undefined)
   const [providersError, setProvidersError] = useState<string | undefined>(undefined)
 
@@ -339,25 +340,65 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
                 <h3 style={{ margin: '0 0 0.5rem 0' }}>{activeRoom.title}</h3>
                 <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
                   <span>{t('lattice-room.members')}:</span>
-                  {activeRoom.members.map((member, idx) => (
-                    <span
-                      key={idx}
-                      style={{
-                        padding: '0.25rem 0.5rem',
-                        backgroundColor: '#f0f0f0',
-                        borderRadius: '4px',
-                        fontSize: '0.875rem',
-                      }}
-                    >
-                      {member.name} ({member.provider})
-                      <button
-                        onClick={() => actions.removeMember(activeRoom.id, idx)}
-                        style={{ marginLeft: '0.5rem', cursor: 'pointer', border: 'none', background: 'transparent' }}
+                  {activeRoom.members.map((member, idx) => {
+                    const editing = editingMember !== null && editingMember.index === idx ? editingMember : null
+                    return (
+                      <span
+                        key={idx}
+                        style={{
+                          padding: '0.25rem 0.5rem',
+                          backgroundColor: '#f0f0f0',
+                          borderRadius: '4px',
+                          fontSize: '0.875rem',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '0.25rem',
+                        }}
                       >
-                        ×
-                      </button>
-                    </span>
-                  ))}
+                        {editing !== null ? (
+                          <>
+                            <Input
+                              value={editing.name}
+                              onChange={(e) => setEditingMember({ index: idx, name: e.target.value })}
+                              style={{ padding: '0.125rem 0.25rem', width: '6rem' }}
+                            />
+                            <button
+                              onClick={() => { actions.renameMember(activeRoom.id, idx, editing.name.trim() || member.name); setEditingMember(null) }}
+                              style={{ cursor: 'pointer', border: 'none', background: 'transparent' }}
+                              title={t('lattice-room.save')}
+                            >
+                              ✓
+                            </button>
+                            <button
+                              onClick={() => setEditingMember(null)}
+                              style={{ cursor: 'pointer', border: 'none', background: 'transparent' }}
+                              title={t('lattice-room.cancel')}
+                            >
+                              ×
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            {member.name} ({member.provider})
+                            <button
+                              onClick={() => setEditingMember({ index: idx, name: member.name })}
+                              style={{ marginLeft: '0.25rem', cursor: 'pointer', border: 'none', background: 'transparent' }}
+                              title={t('lattice-room.edit')}
+                            >
+                              ✎
+                            </button>
+                            <button
+                              onClick={() => actions.removeMember(activeRoom.id, idx)}
+                              style={{ cursor: 'pointer', border: 'none', background: 'transparent' }}
+                              title={t('lattice-room.removeMember')}
+                            >
+                              ×
+                            </button>
+                          </>
+                        )}
+                      </span>
+                    )
+                  })}
                   <Input
                     value={newMemberName}
                     onChange={(e) => setNewMemberName(e.target.value)}
