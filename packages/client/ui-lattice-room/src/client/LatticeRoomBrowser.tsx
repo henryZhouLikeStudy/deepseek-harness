@@ -6,7 +6,7 @@ import { Button, Input } from '@deepseek-ai/dsh-client-ui-primitives'
 import clsx from 'clsx'
 
 export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
-  const { useStore, actions, listProviders, openSubagent, sendTaskToMember, fetchChildResult, useSessions, t } = props
+  const { useStore, actions, listProviders, sendTaskToMember, fetchChildResult, openChildSession, useSessions, t } = props
   const listProvidersRef = useRef(listProviders)
   listProvidersRef.current = listProviders
   const state = useStore(s => s)
@@ -60,6 +60,7 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
               kind: 'result',
               text,
               createdAt: Date.now(),
+              childAddress: { parentSessionId: child.parentSessionId, childSessionId: child.childSessionId, mode: 'one-shot' },
             })
           } else {
             actions.sendMessage(activeRoom.id, {
@@ -108,6 +109,22 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
     actions.addMember(activeRoom.id, member)
     setSelectedProvider(null)
     setNewMemberName('')
+  }
+
+  const handleOpenContact = (provider: SubagentProvider) => {
+    const existing = rooms.find(room => room.kind === '1:1' && room.members.length === 1 && room.members[0].provider === provider)
+    if (existing) {
+      actions.openRoom(existing.id)
+      return
+    }
+    const room: Room = {
+      id: `room-${Date.now()}`,
+      title: provider,
+      kind: '1:1',
+      members: [{ provider, name: `${provider}-agent` }],
+      messages: [],
+    }
+    actions.createRoom(room)
   }
 
   const handleSendTask = async () => {
@@ -189,7 +206,7 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
             providers.map(provider => (
               <div
                 key={provider}
-                onClick={() => openSubagent(provider, `${provider}-agent`)}
+                onClick={() => handleOpenContact(provider)}
                 style={{ padding: '0.5rem', cursor: 'pointer', borderRadius: '4px', marginBottom: '0.25rem' }}
                 className={clsx('contact-item')}
               >
@@ -286,14 +303,28 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
                 {activeRoom.messages.length === 0 && (
                   <p style={{ color: '#666', textAlign: 'center' }}>{t('lattice-room.noMessages')}</p>
                 )}
-                {activeRoom.messages.map(msg => (
-                  <div key={msg.id} style={{ marginBottom: '0.75rem', padding: '0.5rem', backgroundColor: '#f9f9f9', borderRadius: '4px' }}>
-                    <div style={{ fontSize: '0.75rem', color: '#666', marginBottom: '0.25rem' }}>
-                      <strong>{msg.sender}</strong> · {msg.kind} · {new Date(msg.createdAt).toLocaleTimeString()}
+                {activeRoom.messages.map(msg => {
+                  const childAddress = msg.childAddress
+                  return (
+                    <div
+                      key={msg.id}
+                      onClick={childAddress !== undefined ? () => openChildSession(childAddress) : undefined}
+                      style={{
+                        marginBottom: '0.75rem',
+                        padding: '0.5rem',
+                        backgroundColor: '#f9f9f9',
+                        borderRadius: '4px',
+                        cursor: childAddress !== undefined ? 'pointer' : 'default',
+                      }}
+                      title={childAddress !== undefined ? t('lattice-room.openChild') : undefined}
+                    >
+                      <div style={{ fontSize: '0.75rem', color: '#666', marginBottom: '0.25rem' }}>
+                        <strong>{msg.sender}</strong> · {msg.kind} · {new Date(msg.createdAt).toLocaleTimeString()}
+                      </div>
+                      <div>{msg.text}</div>
                     </div>
-                    <div>{msg.text}</div>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
 
               <div style={{ display: 'flex', gap: '0.5rem' }}>

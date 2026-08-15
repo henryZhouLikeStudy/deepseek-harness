@@ -2,7 +2,7 @@
  * Lattice room store: rooms, contacts, messaging state, and pending child
  * results streamed back from dispatched subagents.
  */
-import { defineStore, type EngineStoreHandle, type SessionId } from '@deepseek-ai/dsh-client-runtime/client'
+import { defineStore, type EngineStoreHandle, type SessionId, type SubagentAddress } from '@deepseek-ai/dsh-client-runtime/client'
 
 /**
  * Subagent provider name. The roster is now fetched from the host, so the
@@ -37,6 +37,8 @@ export interface RoomMessage {
   kind: MessageKind
   text: string
   createdAt: number
+  /** Optional child-session address so a result can be opened for traceability. */
+  childAddress?: SubagentAddress
 }
 
 /** Room data model. */
