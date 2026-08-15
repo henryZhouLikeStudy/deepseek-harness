@@ -2522,6 +2522,7 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
       interrupt: request => Promise.resolve(ok(request, { accepted: true as const })),
     },
     lattice: {
+      listProviders: request => Promise.resolve(ok(request, [])),
       groupDispatch: request => Promise.resolve(ok(request, [])),
     },
     host: {
