@@ -1,15 +1,18 @@
 /** Lattice room browser component. */
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { LatticeRoomProps } from './contract/slots.ts'
 import type { Room, RoomMember, SubagentProvider } from './stores.ts'
 import { Button, Input } from '@deepseek-ai/dsh-client-ui-primitives'
 import clsx from 'clsx'
 
 export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
-  const { useStore, actions, listProviders, openSubagent, sendTaskToMember, t } = props
+  const { useStore, actions, listProviders, openSubagent, sendTaskToMember, fetchChildResult, useSessions, t } = props
   const state = useStore(s => s)
   const rooms = Object.values(state.rooms)
   const activeRoom = state.activeRoomId ? state.rooms[state.activeRoomId] : null
+
+  const sessionsById = useSessions(s => s.byId)
+  const currentSessionId = useSessions(s => s.current)
 
   const [showCreateDialog, setShowCreateDialog] = useState(false)
   const [newRoomTitle, setNewRoomTitle] = useState('')
@@ -17,6 +20,52 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
   const [selectedProvider, setSelectedProvider] = useState<SubagentProvider | null>(null)
 
   const providers = listProviders()
+
+  useEffect(() => {
+    if (!activeRoom) return
+    const pending = state.pending[activeRoom.id] ?? []
+    for (const child of pending) {
+      // Only stream results while the room's parent session is still current.
+      if (child.parentSessionId !== currentSessionId) continue
+      const summary = sessionsById[child.childSessionId]
+      if (!summary || summary.running) continue
+      // Remove synchronously so a later effect pass does not reprocess this child.
+      actions.removePendingChild(activeRoom.id, child.childSessionId)
+      void (async () => {
+        try {
+          const text = await fetchChildResult(child.parentSessionId, child.childSessionId)
+          if (text !== undefined) {
+            actions.sendMessage(activeRoom.id, {
+              id: `msg-result-${child.childSessionId}`,
+              sender: child.memberName,
+              kind: 'result',
+              text,
+              createdAt: Date.now(),
+            })
+          } else {
+            actions.sendMessage(activeRoom.id, {
+              id: `msg-no-result-${child.childSessionId}`,
+              sender: 'system',
+              kind: 'status',
+              text: t('lattice-room.noResult', { member: child.memberName }),
+              createdAt: Date.now(),
+            })
+          }
+        } catch (error) {
+          actions.sendMessage(activeRoom.id, {
+            id: `msg-err-${child.childSessionId}`,
+            sender: 'system',
+            kind: 'status',
+            text: t('lattice-room.resultError', {
+              member: child.memberName,
+              error: error instanceof Error ? error.message : 'Unknown error',
+            }),
+            createdAt: Date.now(),
+          })
+        }
+      })()
+    }
+  }, [activeRoom, state.pending, sessionsById, currentSessionId, actions, fetchChildResult, t])
 
   const handleCreateRoom = () => {
     if (!newRoomTitle.trim()) return
@@ -53,12 +102,12 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
     // Send task to each member
     for (const member of activeRoom.members) {
       try {
-        const result = await sendTaskToMember(member, taskInput)
+        const status = await sendTaskToMember(activeRoom.id, member, taskInput)
         actions.sendMessage(activeRoom.id, {
-          id: `msg-${Date.now()}-${member.name}`,
-          sender: member.name,
-          kind: 'result',
-          text: result,
+          id: `msg-status-${Date.now()}-${member.name}`,
+          sender: 'system',
+          kind: 'status',
+          text: status,
           createdAt: Date.now(),
         })
       } catch (error) {

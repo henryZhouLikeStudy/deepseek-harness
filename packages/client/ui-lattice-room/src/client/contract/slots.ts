@@ -3,7 +3,7 @@
  * `sidebar.latticeRooms` hole; each room is a group-chat surface over the
  * official subagent seam.
  */
-import type { SubagentAddress } from '@deepseek-ai/dsh-client-runtime/client'
+import type { SubagentAddress, SessionId } from '@deepseek-ai/dsh-client-runtime/client'
 import type { PropsLocale, PropsRuntime, PropsStore } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SubagentProvider, RoomMember } from '../stores.ts'
 // Type-only: pull the sidebar owner SlotMap merges into this program.
@@ -17,8 +17,17 @@ export interface LatticeRoomInjected {
   openSubagent: (provider: SubagentProvider, name: string) => Promise<void>
   /** Refresh the subagent catalog. */
   refreshSubagents: () => void
-  /** Send a task to a room member and return result. */
-  sendTaskToMember: (member: RoomMember, task: string) => Promise<string>
+  /**
+   * Send a task to a room member, track the dispatched child sessions, and
+   * return a dispatch status string. The final assistant output is streamed
+   * back separately via {@link fetchChildResult}.
+   */
+  sendTaskToMember: (roomId: string, member: RoomMember, task: string) => Promise<string>
+  /**
+   * Read a finished child's transcript and extract its final assistant text.
+   * Returns undefined when the child produced no text output.
+   */
+  fetchChildResult: (parentSessionId: SessionId, childSessionId: SessionId) => Promise<string | undefined>
   /** Open a child session from a subagent address. */
   openChildSession: (address: SubagentAddress) => void
 }

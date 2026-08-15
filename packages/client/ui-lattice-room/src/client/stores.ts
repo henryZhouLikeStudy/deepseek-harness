@@ -1,7 +1,8 @@
 /**
- * Lattice room store: rooms, contacts, and messaging state.
+ * Lattice room store: rooms, contacts, messaging state, and pending child
+ * results streamed back from dispatched subagents.
  */
-import { defineStore, type EngineStoreHandle } from '@deepseek-ai/dsh-client-runtime/client'
+import { defineStore, type EngineStoreHandle, type SessionId } from '@deepseek-ai/dsh-client-runtime/client'
 
 /** Known subagent provider names. */
 export type SubagentProvider = 'claude-code' | 'codex' | 'acp' | 'dsh-sdk' | 'in-process' | 'spawn' | 'fork'
@@ -13,6 +14,14 @@ export type RoomKind = 'group' | '1:1'
 export interface RoomMember {
   provider: SubagentProvider
   name: string
+}
+
+/** Pending child result tracked for one room member. */
+export interface PendingChild {
+  memberName: string
+  childSessionId: SessionId
+  provider: string
+  parentSessionId: SessionId
 }
 
 /** Message kinds. */
@@ -48,6 +57,7 @@ type LatticeRoomState = {
   rooms: Record<string, Room>
   contacts: Contact[]
   activeRoomId: string | null
+  pending: Record<string, PendingChild[]>
 }
 
 type LatticeRoomActions = {
@@ -58,6 +68,8 @@ type LatticeRoomActions = {
   sendMessage: (draft: LatticeRoomState, roomId: string, message: RoomMessage) => void
   setContacts: (draft: LatticeRoomState, contacts: Contact[]) => void
   deleteRoom: (draft: LatticeRoomState, roomId: string) => void
+  addPendingChildren: (draft: LatticeRoomState, roomId: string, children: PendingChild[]) => void
+  removePendingChild: (draft: LatticeRoomState, roomId: string, childSessionId: SessionId) => void
 }
 
 /**
@@ -70,6 +82,7 @@ export function createLatticeRoomStore(): EngineStoreHandle<LatticeRoomState, La
       rooms: {},
       contacts: [],
       activeRoomId: null,
+      pending: {},
     }),
     persist: 'dsh.lattice-room.v1',
     actions: {
@@ -105,8 +118,20 @@ export function createLatticeRoomStore(): EngineStoreHandle<LatticeRoomState, La
       },
       deleteRoom: (d, roomId: string) => {
         delete d.rooms[roomId]
+        delete d.pending[roomId]
         if (d.activeRoomId === roomId) {
           d.activeRoomId = null
+        }
+      },
+      addPendingChildren: (d, roomId: string, children: PendingChild[]) => {
+        const list = d.pending[roomId] ?? []
+        list.push(...children)
+        d.pending[roomId] = list
+      },
+      removePendingChild: (d, roomId: string, childSessionId: SessionId) => {
+        const list = d.pending[roomId]
+        if (list) {
+          d.pending[roomId] = list.filter(c => c.childSessionId !== childSessionId)
         }
       },
     },
