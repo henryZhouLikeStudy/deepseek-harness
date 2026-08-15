@@ -9,6 +9,7 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
   const { useStore, actions, listProviders, sendTaskToMember, fetchChildResult, openChildSession, useSessions, useWorkspaces, t } = props
   const listProvidersRef = useRef(listProviders)
   listProvidersRef.current = listProviders
+  const messagesEndRef = useRef<HTMLDivElement | null>(null)
   const state = useStore(s => s)
   const rooms = Object.values(state.rooms)
   const activeRoom = state.activeRoomId ? state.rooms[state.activeRoomId] : null
@@ -89,6 +90,10 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
     }
   }, [activeRoom, state.pending, sessionsById, actions, fetchChildResult, t])
 
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+  }, [activeRoom?.id, activeRoom?.messages.length])
+
   const handleCreateRoom = () => {
     if (!newRoomTitle.trim()) return
     const room: Room = {
@@ -140,6 +145,17 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
 
   const handleSendTask = async () => {
     if (!activeRoom || !taskInput.trim()) return
+    if (activeRoom.members.length === 0) {
+      actions.sendMessage(activeRoom.id, {
+        id: `msg-${Date.now()}-empty`,
+        sender: 'system',
+        kind: 'status',
+        text: t('lattice-room.noMembers'),
+        createdAt: Date.now(),
+      })
+      setTaskInput('')
+      return
+    }
     const taskMessage = {
       id: `msg-${Date.now()}`,
       sender: 'user',
@@ -391,6 +407,7 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
                     </div>
                   )
                 })}
+                <div ref={messagesEndRef} />
               </div>
 
               <div style={{ display: 'flex', gap: '0.5rem' }}>
