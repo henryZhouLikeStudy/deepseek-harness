@@ -2857,6 +2857,9 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           if (signal?.aborted || (error instanceof SubagentError && error.code === 'CANCELLED')) {
             return err(request, { code: 'cancelled', message: 'lattice group dispatch was cancelled', details: {} })
           }
+          if (error instanceof SubagentError && error.code === 'SUBAGENT_CONTROL_PROJECTIONS_UNAVAILABLE') {
+            return err(request, projectionsUnavailableError())
+          }
           return err(request, { code: 'internal', message: 'subagent catalog read failed', details: {} })
         }
 
@@ -2889,7 +2892,10 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         // Start or reuse each item concurrently but capture each item's own outcome,
         // so a failure reports the exact provider instead of parsing the provider's
         // free-form message back out of the error text.
-        const outcomes = await Promise.all(items.map(async (item) => {
+        type GroupDispatchOutcome =
+          | { ok: true; childSessionId: SessionId; provider: string; mode: 'continuable' | 'one-shot' }
+          | { ok: false; provider: string; error: unknown; rpcError?: RpcError }
+        const outcomes = await Promise.all(items.map(async (item): Promise<GroupDispatchOutcome> => {
           const itemSignal = signal ?? new AbortController().signal
           if (item.childSessionId !== undefined) {
             try {
@@ -2897,9 +2903,29 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
                 source: { kind: 'user', rpcId: request.rpcId },
                 signal: itemSignal,
               })
-              return { ok: true as const, childSessionId: item.childSessionId, provider: item.provider, mode: 'continuable' as const }
+              return { ok: true, childSessionId: item.childSessionId, provider: item.provider, mode: 'continuable' }
             } catch (error: unknown) {
-              return { ok: false as const, provider: item.provider, error }
+              if (error instanceof SubagentError && error.code === 'NO_PROVIDER') {
+                return {
+                  ok: false,
+                  provider: item.provider,
+                  error,
+                  rpcError: {
+                    code: 'lattice-provider-unavailable',
+                    message: error.message,
+                    details: { provider: item.provider },
+                  },
+                }
+              }
+              const promptResponse = subagentPromptError(
+                { rpcId: request.rpcId, payload: { childSessionId: item.childSessionId } },
+                error,
+                itemSignal,
+              )
+              if (promptResponse.result.ok === false) {
+                return { ok: false, provider: item.provider, error, rpcError: promptResponse.result.error }
+              }
+              return { ok: false, provider: item.provider, error }
             }
           }
           try {
@@ -2909,7 +2935,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
               request: { prompt: [{ type: 'text', text: item.prompt }], parent: parentAgent },
               signal: itemSignal,
             })
-            return { ok: true as const, childSessionId: childId, provider: item.provider, mode: 'continuable' as const }
+            return { ok: true, childSessionId: childId, provider: item.provider, mode: 'continuable' }
           } catch (error: unknown) {
             if (error instanceof SubagentError && (error.code === 'CONTINUATION_UNAVAILABLE' || error.code === 'UNSUPPORTED_CAPABILITY')) {
               try {
@@ -2919,26 +2945,26 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
                   parent: parentAgent,
                   signal: itemSignal,
                 })
-                return { ok: true as const, childSessionId: run.id, provider: item.provider, mode: 'one-shot' as const }
+                return { ok: true, childSessionId: run.id, provider: item.provider, mode: 'one-shot' }
               } catch (fallbackError: unknown) {
-                return { ok: false as const, provider: item.provider, error: fallbackError }
+                return { ok: false, provider: item.provider, error: fallbackError }
               }
             }
-            return { ok: false as const, provider: item.provider, error }
+            return { ok: false, provider: item.provider, error }
           }
         }))
 
-        const failure = outcomes.find((outcome): outcome is { ok: false; provider: string; error: unknown } => !outcome.ok)
+        const failure = outcomes.find((outcome): outcome is Extract<GroupDispatchOutcome, { ok: false }> => !outcome.ok)
         if (failure !== undefined) {
-          if ((failure as { rpcError?: true }).rpcError === true) {
-            return err(request, failure.error as RpcError)
-          }
           if (signal?.aborted) {
             return err(request, {
               code: 'cancelled',
               message: 'lattice group dispatch was cancelled',
               details: {},
             })
+          }
+          if (failure.rpcError !== undefined) {
+            return err(request, failure.rpcError)
           }
           if (failure.error instanceof SubagentError && failure.error.code === 'NO_PROVIDER') {
             return err(request, {
@@ -2984,6 +3010,9 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         } catch (error: unknown) {
           if (relaySignal.aborted || (error instanceof SubagentError && error.code === 'CANCELLED')) {
             return err(request, { code: 'cancelled', message: 'lattice relay was cancelled', details: {} })
+          }
+          if (error instanceof SubagentError && error.code === 'SUBAGENT_CONTROL_PROJECTIONS_UNAVAILABLE') {
+            return err(request, projectionsUnavailableError())
           }
           return err(request, { code: 'internal', message: 'subagent catalog read failed', details: {} })
         }
