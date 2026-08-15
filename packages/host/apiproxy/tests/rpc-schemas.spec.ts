@@ -79,12 +79,16 @@ describe('rpcErrorSchema', () => {
     expect(rpcErrorSchema.parse({ code: 'title-invalid', message: 'm', details: { sessionId: 's' } }).code).toBe('title-invalid')
     // The credentials producer still emits this code, so the branch has to stay.
     expect(rpcErrorSchema.parse({ code: 'credential-rejected', message: 'm', details: { ref: 'r' } }).code).toBe('credential-rejected')
+    expect(rpcErrorSchema.parse({ code: 'lattice-parent-not-found', message: 'm', details: { parentSessionId: 's' } }).code).toBe('lattice-parent-not-found')
+    expect(rpcErrorSchema.parse({ code: 'lattice-provider-unavailable', message: 'm', details: { provider: 'p' } }).code).toBe('lattice-provider-unavailable')
     expect(rpcErrorSchema.parse({ code: 'internal', message: 'm', details: {} }).code).toBe('internal')
   })
 
   it('rejects a known code with missing details', () => {
     expect(() => rpcErrorSchema.parse({ code: 'agent-busy', message: 'm', details: {} })).toThrow()
     expect(() => rpcErrorSchema.parse({ code: 'title-invalid', message: 'm', details: {} })).toThrow()
+    expect(() => rpcErrorSchema.parse({ code: 'lattice-parent-not-found', message: 'm', details: {} })).toThrow()
+    expect(() => rpcErrorSchema.parse({ code: 'lattice-provider-unavailable', message: 'm', details: {} })).toThrow()
     expect(() => rpcErrorSchema.parse({ code: 'command-error', message: 'm' })).toThrow()
     expect(() => rpcErrorSchema.parse({ code: 'nope', message: 'm', details: {} })).toThrow()
   })

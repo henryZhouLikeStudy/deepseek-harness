@@ -97,7 +97,7 @@ describe('connection node half', () => {
     ctx.provide('attachments', {
       imageLimits: { maxMessageImageBytes: 20 * 1024 * 1024 },
     } as AttachmentStore)
-    ctx.provide('apiProxy', {} as ApiProxy)
+    ctx.provide('apiProxy', {} as unknown as ApiProxy)
     expect(() => { apply(ctx, { maxRequestBodyBytes: 1024 }) })
       .toThrow(/must be at least .* aggregate image limit/)
     expect(routes).toHaveLength(0)

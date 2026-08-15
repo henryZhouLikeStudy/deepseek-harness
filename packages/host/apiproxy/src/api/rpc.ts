@@ -98,6 +98,8 @@ export interface RpcErrorDetailsMap {
   'subagent-not-resumable': { childSessionId: SessionId }
   'subagent-unauthorized': { childSessionId: SessionId }
   'subagent-delivery-unavailable': { childSessionId: SessionId }
+  'lattice-parent-not-found': { parentSessionId: SessionId }
+  'lattice-provider-unavailable': { provider: string }
   'internal': {}
 }
 

@@ -14,7 +14,7 @@ export interface LatticeRoomInjected {
   /** List registered subagent providers (contact roster). */
   listProviders: () => SubagentProvider[]
   /** Open a subagent by provider and name. */
-  openSubagent: (provider: SubagentProvider, name: string) => void
+  openSubagent: (provider: SubagentProvider, name: string) => Promise<void>
   /** Refresh the subagent catalog. */
   refreshSubagents: () => void
   /** Send a task to a room member and return result. */

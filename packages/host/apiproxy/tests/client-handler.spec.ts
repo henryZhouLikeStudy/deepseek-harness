@@ -20,6 +20,7 @@ function ok<T>(request: RpcRequest<unknown>, value: T): Promise<RpcResponse<T>> 
 function scriptedApi(overrides: {
   sessions?: Partial<ApiProxy['sessions']>
   subagents?: Partial<ApiProxy['subagents']>
+  lattice?: Partial<ApiProxy['lattice']>
   host?: Partial<ApiProxy['host']>
   skills?: Partial<ApiProxy['skills']>
   agentPresets?: Partial<ApiProxy['agentPresets']>
@@ -69,6 +70,10 @@ function scriptedApi(overrides: {
       prompt: r => ok(r, { messageId: 'message-1' as never }),
       interrupt: r => ok(r, { accepted: true as const }),
       ...overrides.subagents,
+    },
+    lattice: {
+      groupDispatch: r => ok(r, []),
+      ...overrides.lattice,
     },
     host: {
       describe: r => ok(r, {

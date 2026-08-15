@@ -2799,6 +2799,63 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
       },
     },
 
+    lattice: {
+      async groupDispatch(request, signal) {
+        const { parentSessionId, items } = request.payload
+        const parentAgent = ctx.agents.get(parentSessionId)
+        if (parentAgent === undefined) {
+          return err(request, {
+            code: 'lattice-parent-not-found',
+            message: `parent session "${parentSessionId}" is not live`,
+            details: { parentSessionId },
+          })
+        }
+        const availableProviders = new Set(ctx.subagents.list())
+        for (const item of items) {
+          if (!availableProviders.has(item.provider)) {
+            return err(request, {
+              code: 'lattice-provider-unavailable',
+              message: `subagent provider "${item.provider}" is not registered`,
+              details: { provider: item.provider },
+            })
+          }
+        }
+        try {
+          const runs = await Promise.all(items.map(item => ctx.subagents.start(item.provider, {
+            label: item.name,
+            prompt: [{ type: 'text', text: item.prompt }],
+            parent: parentAgent,
+            signal: signal ?? new AbortController().signal,
+          })))
+          return ok(request, runs.map((run, index) => ({
+            childSessionId: run.id,
+            provider: items[index].provider,
+          })))
+        } catch (error: unknown) {
+          if (signal?.aborted) {
+            return err(request, {
+              code: 'cancelled',
+              message: 'lattice group dispatch was cancelled',
+              details: {},
+            })
+          }
+          if (error instanceof SubagentError && error.code === 'NO_PROVIDER') {
+            const provider = items.find(item => item.provider === error.message.match(/"([^"]+)"/)?.[1])?.provider ?? ''
+            return err(request, {
+              code: 'lattice-provider-unavailable',
+              message: error.message,
+              details: { provider },
+            })
+          }
+          return err(request, {
+            code: 'internal',
+            message: error instanceof Error ? error.message : 'lattice group dispatch failed',
+            details: {},
+          })
+        }
+      },
+    },
+
     workspace: {
       list(request) {
         return Promise.resolve(ok(request, {

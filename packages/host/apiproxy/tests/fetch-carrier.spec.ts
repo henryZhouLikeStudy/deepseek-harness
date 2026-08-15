@@ -137,6 +137,11 @@ function fakeApi(overrides: Partial<{ muxFrames: MuxFrame[]; hostFrames: HostFra
         return { rpcId: request.rpcId, result: { ok: true, value: { accepted: true as const } } }
       },
     },
+    lattice: {
+      async groupDispatch(request) {
+        return { rpcId: request.rpcId, result: { ok: true, value: [] } }
+      },
+    },
     host: {
       async describe(request) {
         return {

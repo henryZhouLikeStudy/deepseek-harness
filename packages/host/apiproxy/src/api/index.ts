@@ -10,6 +10,7 @@ import type { WorkspaceApi } from './workspace.ts'
 import type { AgentPresetsApi } from './agent-presets.ts'
 import type { SkillsApi } from './skills.ts'
 import type { SubagentsApi } from './subagents.ts'
+import type { LatticeApi } from './lattice.ts'
 import type { EventsApi } from './events.ts'
 import type { GoalsApi } from './goals.ts'
 import type { SettingsApi } from './settings.ts'
@@ -22,6 +23,7 @@ import type { ClientResponse, RpcReceipt } from './rpc.ts'
 export interface ApiProxy {
   sessions: SessionsApi
   subagents: SubagentsApi
+  lattice: LatticeApi
   host: HostApi
   workspace: WorkspaceApi
   skills: SkillsApi
@@ -52,6 +54,7 @@ export type {
   SubagentAddress, SubagentCatalog, SubagentInterruptReceipt, SubagentListEntry,
   SubagentPromptReceipt, SubagentsApi,
 } from './subagents.ts'
+export type { LatticeApi, LatticeDispatchItem, LatticeDispatchResult } from './lattice.ts'
 export type { JobView } from './jobs.ts'
 export type { WorkspaceApi, WorkspaceId, WorkspaceView } from './workspace.ts'
 export type { SkillsApi, SkillEntry } from './skills.ts'
