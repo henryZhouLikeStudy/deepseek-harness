@@ -178,6 +178,14 @@ export function SidebarRoot({
         })}
       </div>
 
+      {/* Lattice room browser sits below workspaces in the same column. */}
+      <div className={css.regionArea} style={{ flex: '0 0 auto', maxHeight: '35%' }}>
+        {renderSlot('sidebar.latticeRooms', {
+          wide,
+          expandSidebar: () => { if (collapsed) toggleSidebar() },
+        })}
+      </div>
+
       {/* Footer actions stack above Settings in both sidebar widths. */}
       <div className={css.footArea}>
         <div className={css.footerActions}>

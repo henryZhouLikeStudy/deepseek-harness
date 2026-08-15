@@ -1,0 +1,61 @@
+/** Lattice room locale keys. */
+
+export const zh = {
+  'lattice-room.title': 'Lattice 房间',
+  'lattice-room.new': '新建房间',
+  'lattice-room.contacts': '联系人',
+  'lattice-room.group': '群聊',
+  'lattice-room.oneOnOne': '一对一',
+  'lattice-room.members': '成员',
+  'lattice-room.addMember': '添加成员',
+  'lattice-room.removeMember': '移除',
+  'lattice-room.sendTask': '发送任务',
+  'lattice-room.taskInput': '输入任务...',
+  'lattice-room.noRooms': '暂无房间',
+  'lattice-room.createFirst': '创建第一个房间',
+  'lattice-room.roomTitle': '房间标题',
+  'lattice-room.selectProvider': '选择提供者',
+  'lattice-room.create': '创建',
+  'lattice-room.cancel': '取消',
+  'lattice-room.delete': '删除',
+  'lattice-room.messages': '消息',
+  'lattice-room.noMessages': '暂无消息',
+  'lattice-room.task': '任务',
+  'lattice-room.result': '结果',
+  'lattice-room.status': '状态',
+  'lattice-room.user': '用户',
+  'lattice-room.project': '项目',
+  'lattice-room.noProject': '无项目',
+} as const
+
+export const en = {
+  'lattice-room.title': 'Lattice Rooms',
+  'lattice-room.new': 'New Room',
+  'lattice-room.contacts': 'Contacts',
+  'lattice-room.group': 'Group',
+  'lattice-room.oneOnOne': '1:1',
+  'lattice-room.members': 'Members',
+  'lattice-room.addMember': 'Add Member',
+  'lattice-room.removeMember': 'Remove',
+  'lattice-room.sendTask': 'Send Task',
+  'lattice-room.taskInput': 'Enter task...',
+  'lattice-room.noRooms': 'No rooms yet',
+  'lattice-room.createFirst': 'Create your first room',
+  'lattice-room.roomTitle': 'Room Title',
+  'lattice-room.selectProvider': 'Select Provider',
+  'lattice-room.create': 'Create',
+  'lattice-room.cancel': 'Cancel',
+  'lattice-room.delete': 'Delete',
+  'lattice-room.messages': 'Messages',
+  'lattice-room.noMessages': 'No messages yet',
+  'lattice-room.task': 'Task',
+  'lattice-room.result': 'Result',
+  'lattice-room.status': 'Status',
+  'lattice-room.user': 'User',
+  'lattice-room.project': 'Project',
+  'lattice-room.noProject': 'No Project',
+} as const
+
+export type LatticeRoomKey = keyof typeof en
+
+export const NS = 'lattice-room'

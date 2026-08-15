@@ -1,0 +1,208 @@
+/** Lattice room browser component. */
+import { useState } from 'react'
+import type { LatticeRoomProps } from './contract/slots.ts'
+import type { Room, RoomMember, SubagentProvider } from './stores.ts'
+import { Button, Input } from '@deepseek-ai/dsh-client-ui-primitives'
+import clsx from 'clsx'
+
+export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
+  const { useStore, actions, listProviders, openSubagent, sendTaskToMember, t } = props
+  const state = useStore(s => s)
+  const rooms = Object.values(state.rooms)
+  const activeRoom = state.activeRoomId ? state.rooms[state.activeRoomId] : null
+
+  const [showCreateDialog, setShowCreateDialog] = useState(false)
+  const [newRoomTitle, setNewRoomTitle] = useState('')
+  const [taskInput, setTaskInput] = useState('')
+  const [selectedProvider, setSelectedProvider] = useState<SubagentProvider | null>(null)
+
+  const providers = listProviders()
+
+  const handleCreateRoom = () => {
+    if (!newRoomTitle.trim()) return
+    const room: Room = {
+      id: `room-${Date.now()}`,
+      title: newRoomTitle,
+      kind: 'group',
+      members: [],
+      messages: [],
+    }
+    actions.createRoom(room)
+    setNewRoomTitle('')
+    setShowCreateDialog(false)
+  }
+
+  const handleAddMember = () => {
+    if (!activeRoom || !selectedProvider) return
+    const member: RoomMember = { provider: selectedProvider, name: `${selectedProvider}-agent` }
+    actions.addMember(activeRoom.id, member)
+    setSelectedProvider(null)
+  }
+
+  const handleSendTask = async () => {
+    if (!activeRoom || !taskInput.trim()) return
+    const taskMessage = {
+      id: `msg-${Date.now()}`,
+      sender: 'user',
+      kind: 'task' as const,
+      text: taskInput,
+      createdAt: Date.now(),
+    }
+    actions.sendMessage(activeRoom.id, taskMessage)
+
+    // Send task to each member
+    for (const member of activeRoom.members) {
+      try {
+        const result = await sendTaskToMember(member, taskInput)
+        actions.sendMessage(activeRoom.id, {
+          id: `msg-${Date.now()}-${member.name}`,
+          sender: member.name,
+          kind: 'result',
+          text: result,
+          createdAt: Date.now(),
+        })
+      } catch (error) {
+        actions.sendMessage(activeRoom.id, {
+          id: `msg-${Date.now()}-err`,
+          sender: 'system',
+          kind: 'status',
+          text: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          createdAt: Date.now(),
+        })
+      }
+    }
+    setTaskInput('')
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', padding: '1rem' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+        <h2 style={{ margin: 0 }}>{t('lattice-room.title')}</h2>
+        <Button onClick={() => setShowCreateDialog(true)}>{t('lattice-room.new')}</Button>
+      </div>
+
+      {showCreateDialog && (
+        <div style={{ padding: '1rem', border: '1px solid #ccc', borderRadius: '4px', marginBottom: '1rem' }}>
+          <Input
+            value={newRoomTitle}
+            onChange={(e) => setNewRoomTitle(e.target.value)}
+            placeholder={t('lattice-room.roomTitle')}
+            style={{ marginBottom: '0.5rem' }}
+          />
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
+            <Button onClick={handleCreateRoom}>{t('lattice-room.create')}</Button>
+            <Button onClick={() => setShowCreateDialog(false)}>{t('lattice-room.cancel')}</Button>
+          </div>
+        </div>
+      )}
+
+      <div style={{ display: 'flex', flex: 1, gap: '1rem', overflow: 'hidden' }}>
+        <div style={{ width: '200px', borderRight: '1px solid #ccc', paddingRight: '1rem', overflowY: 'auto' }}>
+          <h3>{t('lattice-room.contacts')}</h3>
+          {providers.map(provider => (
+            <div
+              key={provider}
+              onClick={() => openSubagent(provider, `${provider}-agent`)}
+              style={{ padding: '0.5rem', cursor: 'pointer', borderRadius: '4px', marginBottom: '0.25rem' }}
+              className={clsx('contact-item')}
+            >
+              {provider}
+            </div>
+          ))}
+
+          <h3 style={{ marginTop: '1rem' }}>Rooms</h3>
+          {rooms.length === 0 && <p style={{ fontSize: '0.875rem', color: '#666' }}>{t('lattice-room.noRooms')}</p>}
+          {rooms.map(room => (
+            <div
+              key={room.id}
+              onClick={() => actions.openRoom(room.id)}
+              style={{
+                padding: '0.5rem',
+                cursor: 'pointer',
+                borderRadius: '4px',
+                marginBottom: '0.25rem',
+                backgroundColor: activeRoom?.id === room.id ? '#e0e0e0' : 'transparent',
+              }}
+            >
+              {room.title}
+            </div>
+          ))}
+        </div>
+
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+          {activeRoom ? (
+            <>
+              <div style={{ marginBottom: '1rem', paddingBottom: '1rem', borderBottom: '1px solid #ccc' }}>
+                <h3 style={{ margin: '0 0 0.5rem 0' }}>{activeRoom.title}</h3>
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                  <span>{t('lattice-room.members')}:</span>
+                  {activeRoom.members.map((member, idx) => (
+                    <span
+                      key={idx}
+                      style={{
+                        padding: '0.25rem 0.5rem',
+                        backgroundColor: '#f0f0f0',
+                        borderRadius: '4px',
+                        fontSize: '0.875rem',
+                      }}
+                    >
+                      {member.name} ({member.provider})
+                      <button
+                        onClick={() => actions.removeMember(activeRoom.id, idx)}
+                        style={{ marginLeft: '0.5rem', cursor: 'pointer', border: 'none', background: 'transparent' }}
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                  <select
+                    value={selectedProvider ?? ''}
+                    onChange={(e) => setSelectedProvider(e.target.value as SubagentProvider)}
+                    style={{ padding: '0.25rem' }}
+                  >
+                    <option value="">{t('lattice-room.selectProvider')}</option>
+                    {providers.map(p => (
+                      <option key={p} value={p}>{p}</option>
+                    ))}
+                  </select>
+                  <Button onClick={handleAddMember} disabled={!selectedProvider}>
+                    {t('lattice-room.addMember')}
+                  </Button>
+                </div>
+              </div>
+
+              <div style={{ flex: 1, overflowY: 'auto', marginBottom: '1rem', padding: '0.5rem', border: '1px solid #ccc', borderRadius: '4px' }}>
+                {activeRoom.messages.length === 0 && (
+                  <p style={{ color: '#666', textAlign: 'center' }}>{t('lattice-room.noMessages')}</p>
+                )}
+                {activeRoom.messages.map(msg => (
+                  <div key={msg.id} style={{ marginBottom: '0.75rem', padding: '0.5rem', backgroundColor: '#f9f9f9', borderRadius: '4px' }}>
+                    <div style={{ fontSize: '0.75rem', color: '#666', marginBottom: '0.25rem' }}>
+                      <strong>{msg.sender}</strong> · {msg.kind} · {new Date(msg.createdAt).toLocaleTimeString()}
+                    </div>
+                    <div>{msg.text}</div>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <Input
+                  value={taskInput}
+                  onChange={(e) => setTaskInput(e.target.value)}
+                  placeholder={t('lattice-room.taskInput')}
+                  onKeyDown={(e) => e.key === 'Enter' && handleSendTask()}
+                  style={{ flex: 1 }}
+                />
+                <Button onClick={handleSendTask}>{t('lattice-room.sendTask')}</Button>
+              </div>
+            </>
+          ) : (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#666' }}>
+              {t('lattice-room.createFirst')}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
