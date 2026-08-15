@@ -9,13 +9,6 @@ import type { SubagentProvider, RoomMember } from '../stores.ts'
 // Type-only: pull the sidebar owner SlotMap merges into this program.
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 
-declare module '@deepseek-ai/dsh-client-ui-slots' {
-  interface SlotMap {
-    /** Group-chat room browser region under the sidebar. */
-    'sidebar.latticeRooms': { kind: 'single'; scope: 'root' }
-  }
-}
-
 /** Host actions the room browser drives (all pure callbacks). */
 export interface LatticeRoomInjected {
   /** List registered subagent providers (contact roster). */

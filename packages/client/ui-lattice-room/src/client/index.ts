@@ -22,30 +22,21 @@ export function apply(ctx: ClientContext): void {
 
   const injected = (): LatticeRoomInjected => ({
     listProviders: (): SubagentProvider[] => {
-      // Official provider list from the subagent system documentation
+      // Official provider roster (the client cannot enumerate host providers yet).
       return ['claude-code', 'codex', 'acp', 'dsh-sdk', 'in-process', 'spawn', 'fork']
     },
-    openSubagent: (provider: SubagentProvider, name: string) => {
-      // Open/refresh a subagent via ctx.sessions
-      const address: SubagentAddress = { provider, name, mode: 'continuable' }
-      ctx.sessions.openSubagent(address)
+    openSubagent: (_provider, _name) => {
+      // Real creation-by-provider needs a host-side RPC; no-op until that lands.
     },
     refreshSubagents: () => {
-      // Refresh subagent catalog for the current session
-      const currentSessionId = ctx.sessions.list.getSnapshot().current
-      if (currentSessionId) {
-        void ctx.sessions.refreshSubagents(currentSessionId)
-      }
+      const current = ctx.sessions.list.getSnapshot().current
+      if (current) void ctx.sessions.refreshSubagents(current)
     },
-    sendTaskToMember: async (member: RoomMember, task: string): Promise<string> => {
-      // Open/refresh the member's subagent and return a status message
-      const address: SubagentAddress = { provider: member.provider, name: member.name, mode: 'continuable' }
-      ctx.sessions.openSubagent(address)
-      void ctx.sessions.refreshSubagents(ctx.sessions.list.getSnapshot().current ?? '')
-      return `Task sent to ${member.name} (${member.provider})`
+    sendTaskToMember: async (member, task) => {
+      // Real dispatch needs the host-side group-dispatch RPC; return a queued status for now.
+      return `[${member.name}] queued: ${task}`
     },
-    openChildSession: (address: SubagentAddress) => {
-      // Open a child session from a subagent address
+    openChildSession: (address) => {
       ctx.sessions.openSubagent(address)
     },
   })
