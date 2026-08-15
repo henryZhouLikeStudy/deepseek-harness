@@ -95,16 +95,6 @@ export function apply(ctx: ClientContext): void {
       if (!response.result.ok) return []
       return response.result.value as SubagentProvider[]
     },
-    openSubagent: async (provider, name) => {
-      const parentSessionId = currentSessionId()
-      if (parentSessionId === undefined) return
-      const response = await connection.api.lattice.groupDispatch({
-        parentSessionId,
-        items: [{ provider, name, prompt: '' }],
-      })
-      if (!response.result.ok) return
-      await openDispatchedChildren(parentSessionId, response.result.value)
-    },
     refreshSubagents: () => {
       const current = currentSessionId()
       if (current) void ctx.sessions.refreshSubagents(current)

@@ -13,8 +13,6 @@ import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 export interface LatticeRoomInjected {
   /** List registered subagent providers (contact roster). */
   listProviders: () => Promise<SubagentProvider[]>
-  /** Open a subagent by provider and name. */
-  openSubagent: (provider: SubagentProvider, name: string) => Promise<void>
   /** Refresh the subagent catalog. */
   refreshSubagents: () => void
   /**

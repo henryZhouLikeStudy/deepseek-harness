@@ -28,6 +28,7 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
   const [newRoomKind, setNewRoomKind] = useState<RoomKind>('group')
   const [newRoomProject, setNewRoomProject] = useState<{ id: string; title: string } | null>(null)
   const [editingMember, setEditingMember] = useState<{ index: number; name: string } | null>(null)
+  const [forwardingMessage, setForwardingMessage] = useState<{ id: string; text: string; fromChild: SessionId } | null>(null)
   const [providers, setProviders] = useState<SubagentProvider[] | undefined>(undefined)
   const [providersError, setProvidersError] = useState<string | undefined>(undefined)
 
@@ -195,29 +196,6 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
       }
     }))
     setTaskInput('')
-  }
-
-  const handleForwardResult = async (fromChildSessionId: SessionId, content: string) => {
-    if (!activeRoom) return
-    const targetName = window.prompt(t('lattice-room.forward'))
-    if (!targetName) return
-    const targetMember = activeRoom.members.find(m => m.name === targetName.trim())
-    if (targetMember === undefined) {
-      window.alert(`Member not found: ${targetName}`)
-      return
-    }
-    if (targetMember.childSessionId === undefined) {
-      window.alert('目标成员尚未建立会话')
-      return
-    }
-    const ok = await relay(fromChildSessionId, targetMember.childSessionId, content)
-    actions.sendMessage(activeRoom.id, {
-      id: `msg-forward-${Date.now()}`,
-      sender: 'system',
-      kind: 'status',
-      text: ok ? `Forwarded to ${targetMember.name}` : `Forward to ${targetMember.name} failed`,
-      createdAt: Date.now(),
-    })
   }
 
   const ungroupedRooms = rooms.filter(room => room.projectId === undefined)
@@ -417,6 +395,15 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
                             >
                               ✎
                             </button>
+                            {member.childSessionId !== undefined && (
+                              <button
+                                onClick={() => actions.setMemberChildSession(activeRoom.id, idx, undefined)}
+                                style={{ cursor: 'pointer', border: 'none', background: 'transparent' }}
+                                title={t('lattice-room.resetSession')}
+                              >
+                                ↺
+                              </button>
+                            )}
                             <button
                               onClick={() => actions.removeMember(activeRoom.id, idx)}
                               style={{ cursor: 'pointer', border: 'none', background: 'transparent' }}
@@ -475,7 +462,10 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
                         <span><strong>{msg.sender}</strong> · {msg.kind} · {new Date(msg.createdAt).toLocaleTimeString()}</span>
                         {childAddress !== undefined && (
                           <button
-                            onClick={(e) => { e.stopPropagation(); void handleForwardResult(childAddress.childSessionId, msg.text) }}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setForwardingMessage({ id: msg.id, text: msg.text, fromChild: childAddress.childSessionId })
+                            }}
                             style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#666', fontSize: '0.75rem' }}
                             title={t('lattice-room.forward')}
                           >
@@ -484,6 +474,39 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
                         )}
                       </div>
                       <div>{msg.text}</div>
+                      {(() => {
+                        const forward = forwardingMessage
+                        if (forward === null || forward.id !== msg.id) return null
+                        return (
+                          <div style={{ marginTop: '0.5rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                            {activeRoom.members
+                              .filter((member): member is RoomMember & { childSessionId: SessionId } =>
+                                member.childSessionId !== undefined && member.childSessionId !== forward.fromChild)
+                              .map(member => (
+                                <button
+                                  key={member.childSessionId}
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    void (async () => {
+                                      const ok = await relay(forward.fromChild, member.childSessionId, forward.text)
+                                      actions.sendMessage(activeRoom.id, {
+                                        id: `msg-forward-${Date.now()}`,
+                                        sender: 'system',
+                                        kind: 'status',
+                                        text: ok ? `Forwarded to ${member.name}` : `Forward to ${member.name} failed`,
+                                        createdAt: Date.now(),
+                                      })
+                                      setForwardingMessage(null)
+                                    })()
+                                  }}
+                                  style={{ border: '1px solid #ccc', borderRadius: '4px', padding: '0.25rem 0.5rem', cursor: 'pointer', background: '#fff', fontSize: '0.75rem' }}
+                                >
+                                  {member.name}
+                                </button>
+                              ))}
+                          </div>
+                        )
+                      })()}
                     </div>
                   )
                 })}

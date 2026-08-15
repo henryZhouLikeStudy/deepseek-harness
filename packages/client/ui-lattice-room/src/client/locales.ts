@@ -36,6 +36,7 @@ export const zh = {
   'lattice-room.project': '项目',
   'lattice-room.noProject': '无项目',
   'lattice-room.forward': '转发',
+  'lattice-room.resetSession': '重置会话',
 } as const
 
 export const en = {
@@ -74,6 +75,7 @@ export const en = {
   'lattice-room.project': 'Project',
   'lattice-room.noProject': 'No Project',
   'lattice-room.forward': 'Forward',
+  'lattice-room.resetSession': 'Reset session',
 } as const
 
 export type LatticeRoomKey = keyof typeof en
