@@ -72,6 +72,7 @@ function scriptedApi(overrides: {
       ...overrides.subagents,
     },
     lattice: {
+      listProviders: r => ok(r, []),
       groupDispatch: r => ok(r, []),
       ...overrides.lattice,
     },
