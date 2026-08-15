@@ -132,7 +132,11 @@ export function apply(ctx: ClientContext): void {
       }))
       await openDispatchedChildren(parentSessionId, response.result.value)
       const childSessionId = response.result.value[0]?.childSessionId
-      return { text: `[${member.name}] dispatched to ${response.result.value.map(r => r.childSessionId).join(', ')}`, children, childSessionId }
+      return {
+        text: `[${member.name}] dispatched to ${response.result.value.map(r => r.childSessionId).join(', ')}`,
+        children,
+        ...(childSessionId !== undefined ? { childSessionId } : {}),
+      }
     },
     relay: async (fromChildSessionId, toChildSessionId, content) => {
       const parentSessionId = currentSessionId()
