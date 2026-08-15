@@ -95,8 +95,7 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
       id: `room-${Date.now()}`,
       title: newRoomTitle,
       kind: newRoomKind,
-      projectId: newRoomProject?.id,
-      projectTitle: newRoomProject?.title,
+      ...(newRoomProject !== null ? { projectId: newRoomProject.id, projectTitle: newRoomProject.title } : {}),
       members: [],
       messages: [],
     }
