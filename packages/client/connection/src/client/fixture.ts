@@ -2524,6 +2524,7 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
     lattice: {
       listProviders: request => Promise.resolve(ok(request, [])),
       groupDispatch: request => Promise.resolve(ok(request, [])),
+      relay: request => Promise.resolve(ok(request, { messageId: 'm' })),
     },
     host: {
       describe: request => ok(request, {
@@ -3099,6 +3100,7 @@ export class FixtureApiClient extends AbstractApiClient {
       case 'subagent.interrupt': return this.api.subagents.interrupt(request)
       case 'lattice.listProviders': return this.api.lattice.listProviders(request)
       case 'lattice.groupDispatch': return this.api.lattice.groupDispatch(request, signal)
+      case 'lattice.relay': return this.api.lattice.relay(request, signal)
       case 'host.describe': return this.api.host.describe(request)
       case 'host.pickDirectory': return this.api.host.pickDirectory(request, new AbortController().signal)
       case 'host.listDirectory': return this.api.host.listDirectory(request, new AbortController().signal)

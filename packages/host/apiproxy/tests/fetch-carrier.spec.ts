@@ -144,6 +144,9 @@ function fakeApi(overrides: Partial<{ muxFrames: MuxFrame[]; hostFrames: HostFra
       async groupDispatch(request) {
         return { rpcId: request.rpcId, result: { ok: true, value: [] } }
       },
+      async relay(request) {
+        return { rpcId: request.rpcId, result: { ok: true, value: { messageId: 'message-1' } } }
+      },
     },
     host: {
       async describe(request) {

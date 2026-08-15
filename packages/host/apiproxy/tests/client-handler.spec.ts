@@ -74,6 +74,7 @@ function scriptedApi(overrides: {
     lattice: {
       listProviders: r => ok(r, []),
       groupDispatch: r => ok(r, []),
+      relay: r => ok(r, { messageId: 'message-1' }),
       ...overrides.lattice,
     },
     host: {
