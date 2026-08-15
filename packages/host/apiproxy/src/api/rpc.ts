@@ -95,9 +95,9 @@ export interface RpcErrorDetailsMap {
     childSessionId: SessionId
     reason: 'corrupt' | 'unsupported' | 'unavailable'
   }
-  'subagent-not-resumable': { childSessionId: SessionId }
-  'subagent-unauthorized': { childSessionId: SessionId }
-  'subagent-delivery-unavailable': { childSessionId: SessionId }
+  'subagent-not-resumable': { childSessionId: SessionId; provider?: string }
+  'subagent-unauthorized': { childSessionId: SessionId; provider?: string }
+  'subagent-delivery-unavailable': { childSessionId: SessionId; provider?: string }
   'lattice-parent-not-found': { parentSessionId: SessionId }
   'lattice-provider-unavailable': { provider: string }
   'lattice-self-relay': {}

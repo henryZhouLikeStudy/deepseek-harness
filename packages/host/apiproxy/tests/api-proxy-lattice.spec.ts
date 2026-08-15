@@ -43,6 +43,7 @@ function bench(options: {
     : Promise.reject(options.startError))
   const ctx = new Context()
   ctx.provide('agents', { get: (id: SessionId) => id === PARENT ? parent : undefined })
+  ctx.provide('userQuestions', { registerProvider: () => () => {} })
   ctx.provide('subagents', {
     list: () => options.providers ?? ['spawn'],
     listChildren,

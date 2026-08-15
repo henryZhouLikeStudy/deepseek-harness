@@ -2922,10 +2922,15 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
                 error,
                 itemSignal,
               )
-              if (promptResponse.result.ok === false) {
-                return { ok: false, provider: item.provider, error, rpcError: promptResponse.result.error }
+              if (!promptResponse.result.ok) {
+                const baseError = promptResponse.result.error
+                const rpcError: RpcError = baseError.code === 'subagent-not-resumable'
+                  || baseError.code === 'subagent-unauthorized'
+                  || baseError.code === 'subagent-delivery-unavailable'
+                  ? { ...baseError, details: { ...baseError.details, provider: item.provider } }
+                  : baseError
+                return { ok: false, provider: item.provider, error, rpcError }
               }
-              return { ok: false, provider: item.provider, error }
             }
           }
           try {
@@ -2956,15 +2961,15 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
 
         const failure = outcomes.find((outcome): outcome is Extract<GroupDispatchOutcome, { ok: false }> => !outcome.ok)
         if (failure !== undefined) {
+          if (failure.rpcError !== undefined) {
+            return err(request, failure.rpcError)
+          }
           if (signal?.aborted) {
             return err(request, {
               code: 'cancelled',
               message: 'lattice group dispatch was cancelled',
               details: {},
             })
-          }
-          if (failure.rpcError !== undefined) {
-            return err(request, failure.rpcError)
           }
           if (failure.error instanceof SubagentError && failure.error.code === 'NO_PROVIDER') {
             return err(request, {
