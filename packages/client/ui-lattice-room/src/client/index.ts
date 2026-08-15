@@ -1,5 +1,5 @@
 /** Lattice room plugin, browser half. */
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+import type { ClientContext, SessionId } from '@deepseek-ai/dsh-client-runtime/client'
 import type { ConnectionHandle } from '@deepseek-ai/dsh-client-connection/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type { LatticeRoomInjected } from './contract/slots.ts'
@@ -27,11 +27,11 @@ export function apply(ctx: ClientContext): void {
   // Typert remote contribution for @deepseek-ai/dsh-host-apiproxy; until that
   // is generated and mounted by dsh-api-remotes, the same wire method is
   // reached through connection.api.lattice.groupDispatch.
-  const currentSessionId = (): string | undefined => ctx.sessions.list.getSnapshot().current
+  const currentSessionId = (): SessionId | undefined => ctx.sessions.list.getSnapshot().current
 
   const openDispatchedChildren = async (
-    parentSessionId: string,
-    results: Array<{ childSessionId: string; provider: string }>,
+    parentSessionId: SessionId,
+    results: Array<{ childSessionId: SessionId; provider: string }>,
   ): Promise<void> => {
     await ctx.sessions.refreshSubagents(parentSessionId)
     for (const result of results) {

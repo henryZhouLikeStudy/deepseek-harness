@@ -140,6 +140,10 @@ export class FakeApiClient implements IApiClient {
     }))),
   }
 
+  readonly lattice: IApiClient['lattice'] = {
+    groupDispatch: (payload: unknown) => this.record('lattice.groupDispatch', payload, Promise.resolve(ok([]))),
+  }
+
   readonly host: IApiClient['host'] = {
     describe: payload => this.record('host.describe', payload, this.onDescribe(payload)),
     pickDirectory: payload => this.record('host.pickDirectory', payload, this.onPickDirectory(payload)),
