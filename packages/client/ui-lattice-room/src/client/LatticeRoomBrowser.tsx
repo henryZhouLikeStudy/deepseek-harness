@@ -131,6 +131,13 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
     actions.createRoom(room)
   }
 
+  const handleAddContactToRoom = (provider: SubagentProvider) => {
+    if (!activeRoom || activeRoom.kind !== 'group') return
+    if (activeRoom.members.some(member => member.provider === provider)) return
+    const member: RoomMember = { provider, name: `${provider}-agent` }
+    actions.addMember(activeRoom.id, member)
+  }
+
   const handleSendTask = async () => {
     if (!activeRoom || !taskInput.trim()) return
     const taskMessage = {
@@ -269,11 +276,26 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
             providers.map(provider => (
               <div
                 key={provider}
-                onClick={() => handleOpenContact(provider)}
-                style={{ padding: '0.5rem', cursor: 'pointer', borderRadius: '4px', marginBottom: '0.25rem' }}
+                style={{ padding: '0.5rem', borderRadius: '4px', marginBottom: '0.25rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.25rem' }}
                 className={clsx('contact-item')}
               >
-                {provider}
+                <span
+                  onClick={() => handleOpenContact(provider)}
+                  style={{ cursor: 'pointer', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                >
+                  {provider}
+                </span>
+                {activeRoom?.kind === 'group' && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleAddContactToRoom(provider) }}
+                    disabled={activeRoom.members.some(member => member.provider === provider)}
+                    style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#666', fontSize: '1rem', lineHeight: '1' }}
+                    title={t('lattice-room.addMember')}
+                    aria-label={t('lattice-room.addMember')}
+                  >
+                    +
+                  </button>
+                )}
               </div>
             ))
           )}
