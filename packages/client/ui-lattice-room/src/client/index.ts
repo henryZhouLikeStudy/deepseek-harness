@@ -108,7 +108,7 @@ export function apply(ctx: ClientContext): void {
       const current = currentSessionId()
       if (current) void ctx.sessions.refreshSubagents(current)
     },
-    sendTaskToMember: async (roomId, member, task) => {
+    sendTaskToMember: async (_roomId, member, task) => {
       const parentSessionId = currentSessionId()
       if (parentSessionId === undefined) return { text: `[${member.name}] no current session`, children: [] }
       const response = await connection.api.lattice.groupDispatch({
