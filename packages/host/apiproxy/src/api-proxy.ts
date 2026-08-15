@@ -2832,20 +2832,66 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
             })
           }
         }
+
+        // Reject duplicate continuation targets before any work starts.
+        const seenChildSessionIds = new Set<SessionId>()
+        for (const item of items) {
+          if (item.childSessionId === undefined) continue
+          if (seenChildSessionIds.has(item.childSessionId)) {
+            return err(request, {
+              code: 'bad-request',
+              message: 'duplicate childSessionId',
+              details: { issues: [] },
+            })
+          }
+          seenChildSessionIds.add(item.childSessionId)
+        }
+
+        // Read the durable catalog once, then preflight every continuation target
+        // before starting or prompting any child, so a preflight failure leaks no
+        // started subagents.
+        let children: CatalogSubagentListEntry[]
+        try {
+          children = await ctx.subagents.listChildren(parentSessionId, signal)
+        } catch (error: unknown) {
+          if (signal?.aborted || (error instanceof SubagentError && error.code === 'CANCELLED')) {
+            return err(request, { code: 'cancelled', message: 'lattice group dispatch was cancelled', details: {} })
+          }
+          return err(request, { code: 'internal', message: 'subagent catalog read failed', details: {} })
+        }
+
+        for (const item of items) {
+          if (item.childSessionId === undefined) continue
+          const entry = children.find(candidate => candidate.id === item.childSessionId)
+          if (entry === undefined) {
+            return err(request, {
+              code: 'subagent-not-found',
+              message: `session "${item.childSessionId}" is not a continuable direct child of "${parentSessionId}"`,
+              details: { parentSessionId, childSessionId: item.childSessionId },
+            })
+          }
+          if (entry.kind === 'diagnostic') {
+            return err(request, {
+              code: 'subagent-catalog-diagnostic',
+              message: `subagent "${item.childSessionId}" is ${entry.reason}`,
+              details: { parentSessionId, childSessionId: item.childSessionId, reason: entry.reason },
+            })
+          }
+          if (entry.mode !== 'continuable') {
+            return err(request, {
+              code: 'subagent-not-found',
+              message: `session "${item.childSessionId}" is not a continuable direct child of "${parentSessionId}"`,
+              details: { parentSessionId, childSessionId: item.childSessionId },
+            })
+          }
+        }
+
         // Start or reuse each item concurrently but capture each item's own outcome,
         // so a failure reports the exact provider instead of parsing the provider's
         // free-form message back out of the error text.
         const outcomes = await Promise.all(items.map(async (item) => {
           const itemSignal = signal ?? new AbortController().signal
           if (item.childSessionId !== undefined) {
-            const verified = await catalogChild(ctx, {
-              parentSessionId,
-              childSessionId: item.childSessionId,
-              mode: 'continuable',
-            }, signal)
-            if (verified.error !== undefined) {
-              return { ok: false as const, provider: item.provider, error: verified.error, rpcError: true as const }
-            }
             try {
               await ctx.subagents.followup(parentAgent, item.childSessionId, [{ type: 'text', text: item.prompt }], {
                 source: { kind: 'user', rpcId: request.rpcId },
@@ -2916,6 +2962,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
 
       async relay(request, signal) {
         const { parentSessionId, fromChildSessionId, toChildSessionId, content } = request.payload
+        const relaySignal = signal ?? new AbortController().signal
         if (fromChildSessionId === toChildSessionId) {
           return err(request, {
             code: 'lattice-self-relay',
@@ -2931,7 +2978,15 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
             details: { parentSessionId },
           })
         }
-        const children = await ctx.subagents.listChildren(parentSessionId, signal)
+        let children: CatalogSubagentListEntry[]
+        try {
+          children = await ctx.subagents.listChildren(parentSessionId, relaySignal)
+        } catch (error: unknown) {
+          if (relaySignal.aborted || (error instanceof SubagentError && error.code === 'CANCELLED')) {
+            return err(request, { code: 'cancelled', message: 'lattice relay was cancelled', details: {} })
+          }
+          return err(request, { code: 'internal', message: 'subagent catalog read failed', details: {} })
+        }
         const fromEntry = children.find(child => child.id === fromChildSessionId)
         if (fromEntry === undefined || fromEntry.kind !== 'child') {
           return err(request, {
@@ -2940,16 +2995,20 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
             details: { parentSessionId, childSessionId: fromChildSessionId },
           })
         }
-        const verified = await catalogChild(ctx, { parentSessionId, childSessionId: toChildSessionId, mode: 'continuable' }, signal)
+        const verified = await catalogChild(ctx, { parentSessionId, childSessionId: toChildSessionId, mode: 'continuable' }, relaySignal)
         if (verified.error !== undefined) return err(request, verified.error)
         try {
           const messageId = await ctx.subagents.followup(parentAgent, toChildSessionId, [{ type: 'text', text: content }], {
             source: { kind: 'coordinator', form: 'relay', senderSessionId: fromChildSessionId },
-            signal: signal ?? new AbortController().signal,
+            signal: relaySignal,
           })
           return ok(request, { messageId })
         } catch (error: unknown) {
-          return err(request, { code: 'internal', message: error instanceof Error ? error.message : 'lattice relay failed', details: {} })
+          return subagentPromptError(
+            { rpcId: request.rpcId, payload: { childSessionId: toChildSessionId } },
+            error,
+            relaySignal,
+          )
         }
       },
     },
