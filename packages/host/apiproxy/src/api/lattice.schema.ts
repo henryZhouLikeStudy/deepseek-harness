@@ -10,6 +10,7 @@ export const latticeDispatchItemSchema = z.object({
   provider: z.string().min(1),
   name: z.string().min(1),
   prompt: z.string(),
+  childSessionId: sessionIdSchema.optional(),
 }) satisfies z.ZodType<Wire<RequestPayload<'lattice.groupDispatch'>['items'][number]>>
 
 /** lattice.groupDispatch request payload. */
@@ -22,6 +23,7 @@ export const latticeGroupDispatchRequestSchema = z.object({
 export const latticeDispatchResultSchema = z.object({
   childSessionId: sessionIdSchema,
   provider: z.string().min(1),
+  mode: z.enum(['one-shot', 'continuable']),
 }) satisfies z.ZodType<Wire<ResponseValue<'lattice.groupDispatch'>[number]>>
 
 /** lattice.listProviders request payload. */

@@ -2824,19 +2824,52 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
             })
           }
         }
-        // Start every item concurrently but capture each item's own outcome, so
-        // a failure reports the exact provider instead of parsing the provider's
+        // Start or reuse each item concurrently but capture each item's own outcome,
+        // so a failure reports the exact provider instead of parsing the provider's
         // free-form message back out of the error text.
         const outcomes = await Promise.all(items.map(async (item) => {
+          const itemSignal = signal ?? new AbortController().signal
+          if (item.childSessionId !== undefined) {
+            const verified = await catalogChild(ctx, {
+              parentSessionId,
+              childSessionId: item.childSessionId,
+              mode: 'continuable',
+            }, signal)
+            if (verified.error !== undefined) {
+              return { ok: false as const, provider: item.provider, error: verified.error }
+            }
+            try {
+              await ctx.subagents.followup(parentAgent, item.childSessionId, [{ type: 'text', text: item.prompt }], {
+                source: { kind: 'user', rpcId: request.rpcId },
+                signal: itemSignal,
+              })
+              return { ok: true as const, childSessionId: item.childSessionId, provider: item.provider, mode: 'continuable' as const }
+            } catch (error: unknown) {
+              return { ok: false as const, provider: item.provider, error }
+            }
+          }
           try {
-            const run = await ctx.subagents.start(item.provider, {
+            const { childId } = await ctx.subagents.startContinuable({
+              provider: item.provider,
               label: item.name,
-              prompt: [{ type: 'text', text: item.prompt }],
-              parent: parentAgent,
-              signal: signal ?? new AbortController().signal,
+              request: { prompt: [{ type: 'text', text: item.prompt }], parent: parentAgent },
+              signal: itemSignal,
             })
-            return { ok: true as const, childSessionId: run.id, provider: item.provider }
+            return { ok: true as const, childSessionId: childId, provider: item.provider, mode: 'continuable' as const }
           } catch (error: unknown) {
+            if (error instanceof SubagentError && (error.code === 'CONTINUATION_UNAVAILABLE' || error.code === 'UNSUPPORTED_CAPABILITY')) {
+              try {
+                const run = await ctx.subagents.start(item.provider, {
+                  label: item.name,
+                  prompt: [{ type: 'text', text: item.prompt }],
+                  parent: parentAgent,
+                  signal: itemSignal,
+                })
+                return { ok: true as const, childSessionId: run.id, provider: item.provider, mode: 'one-shot' as const }
+              } catch (fallbackError: unknown) {
+                return { ok: false as const, provider: item.provider, error: fallbackError }
+              }
+            }
             return { ok: false as const, provider: item.provider, error }
           }
         }))
@@ -2864,7 +2897,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           })
         }
 
-        const runs = outcomes.flatMap(outcome => outcome.ok ? [{ childSessionId: outcome.childSessionId, provider: outcome.provider }] : [])
+        const runs = outcomes.flatMap(outcome => outcome.ok ? [{ childSessionId: outcome.childSessionId, provider: outcome.provider, mode: outcome.mode }] : [])
         return ok(request, runs)
       },
     },
