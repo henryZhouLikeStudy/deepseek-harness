@@ -67,7 +67,7 @@ import {
   subagentListValueSchema,
   subagentPromptValueSchema,
 } from '../api/subagents.schema.ts'
-import { latticeGroupDispatchRequestSchema, latticeGroupDispatchValueSchema } from '../api/lattice.schema.ts'
+import { latticeGroupDispatchValueSchema } from '../api/lattice.schema.ts'
 
 /**
  * Client consumption face of the contract (shape a): same domain tree as ApiProxy, but unary

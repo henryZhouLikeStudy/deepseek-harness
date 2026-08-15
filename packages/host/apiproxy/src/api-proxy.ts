@@ -2821,16 +2821,16 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           }
         }
         try {
-          const runs = await Promise.all(items.map(item => ctx.subagents.start(item.provider, {
-            label: item.name,
-            prompt: [{ type: 'text', text: item.prompt }],
-            parent: parentAgent,
-            signal: signal ?? new AbortController().signal,
-          })))
-          return ok(request, runs.map((run, index) => ({
-            childSessionId: run.id,
-            provider: items[index].provider,
-          })))
+          const runs = await Promise.all(items.map(async (item) => {
+            const run = await ctx.subagents.start(item.provider, {
+              label: item.name,
+              prompt: [{ type: 'text', text: item.prompt }],
+              parent: parentAgent,
+              signal: signal ?? new AbortController().signal,
+            })
+            return { childSessionId: run.id, provider: item.provider }
+          }))
+          return ok(request, runs)
         } catch (error: unknown) {
           if (signal?.aborted) {
             return err(request, {
