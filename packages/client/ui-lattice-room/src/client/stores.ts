@@ -17,6 +17,8 @@ export type RoomKind = 'group' | '1:1'
 export interface RoomMember {
   provider: SubagentProvider
   name: string
+  /** Durable child session id when the member has been dispatched in continuable mode. */
+  childSessionId?: SessionId
 }
 
 /** Pending child result tracked for one room member. */
@@ -73,6 +75,7 @@ type LatticeRoomActions = {
   addMember: (draft: LatticeRoomState, roomId: string, member: RoomMember) => void
   removeMember: (draft: LatticeRoomState, roomId: string, memberIndex: number) => void
   renameMember: (draft: LatticeRoomState, roomId: string, memberIndex: number, name: string) => void
+  setMemberChildSession: (draft: LatticeRoomState, roomId: string, memberIndex: number, childSessionId: SessionId) => void
   sendMessage: (draft: LatticeRoomState, roomId: string, message: RoomMessage) => void
   setContacts: (draft: LatticeRoomState, contacts: Contact[]) => void
   deleteRoom: (draft: LatticeRoomState, roomId: string) => void
@@ -121,6 +124,12 @@ export function createLatticeRoomStore(): EngineStoreHandle<LatticeRoomState, La
           room.members[memberIndex].name = name
         }
       },
+      setMemberChildSession: (d, roomId: string, memberIndex: number, childSessionId: SessionId) => {
+        const room = d.rooms[roomId]
+        if (room && room.members[memberIndex]) {
+          room.members[memberIndex].childSessionId = childSessionId
+        }
+      },
       sendMessage: (d, roomId: string, message: RoomMessage) => {
         const room = d.rooms[roomId]
         if (room) {
@@ -131,7 +140,9 @@ export function createLatticeRoomStore(): EngineStoreHandle<LatticeRoomState, La
         d.contacts = contacts
       },
       deleteRoom: (d, roomId: string) => {
+        // oxlint-disable-next-line typescript/no-dynamic-delete
         delete d.rooms[roomId]
+        // oxlint-disable-next-line typescript/no-dynamic-delete
         delete d.pending[roomId]
         if (d.activeRoomId === roomId) {
           d.activeRoomId = null

@@ -34,3 +34,16 @@ export const latticeListProvidersValueSchema = z.array(z.string().min(1)) satisf
 
 /** lattice.groupDispatch response value. */
 export const latticeGroupDispatchValueSchema = z.array(latticeDispatchResultSchema) satisfies z.ZodType<Wire<ResponseValue<'lattice.groupDispatch'>>>
+
+/** lattice.relay request payload. */
+export const latticeRelayRequestSchema = z.object({
+  parentSessionId: sessionIdSchema,
+  fromChildSessionId: sessionIdSchema,
+  toChildSessionId: sessionIdSchema,
+  content: z.string(),
+}) satisfies z.ZodType<Wire<RequestPayload<'lattice.relay'>>>
+
+/** lattice.relay response value. */
+export const latticeRelayValueSchema = z.object({
+  messageId: z.string(),
+}) satisfies z.ZodType<Wire<ResponseValue<'lattice.relay'>>>

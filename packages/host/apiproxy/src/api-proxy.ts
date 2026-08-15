@@ -2897,8 +2897,33 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           })
         }
 
-        const runs = outcomes.flatMap(outcome => outcome.ok ? [{ childSessionId: outcome.childSessionId, provider: outcome.provider, mode: outcome.mode }] : [])
+        const runs = outcomes.flatMap(outcome => (
+          outcome.ok ? [{ childSessionId: outcome.childSessionId, provider: outcome.provider, mode: outcome.mode }] : []
+        ))
         return ok(request, runs)
+      },
+
+      async relay(request, signal) {
+        const { parentSessionId, fromChildSessionId, toChildSessionId, content } = request.payload
+        const parentAgent = ctx.agents.get(parentSessionId)
+        if (parentAgent === undefined) {
+          return err(request, {
+            code: 'lattice-parent-not-found',
+            message: `parent session "${parentSessionId}" is not live`,
+            details: { parentSessionId },
+          })
+        }
+        const verified = await catalogChild(ctx, { parentSessionId, childSessionId: toChildSessionId, mode: 'continuable' }, signal)
+        if (verified.error !== undefined) return err(request, verified.error)
+        try {
+          const messageId = await ctx.subagents.followup(parentAgent, toChildSessionId, [{ type: 'text', text: content }], {
+            source: { kind: 'coordinator', form: 'relay', senderSessionId: fromChildSessionId },
+            signal: signal ?? new AbortController().signal,
+          })
+          return ok(request, { messageId })
+        } catch (error: unknown) {
+          return err(request, { code: 'internal', message: error instanceof Error ? error.message : 'lattice relay failed', details: {} })
+        }
       },
     },
 

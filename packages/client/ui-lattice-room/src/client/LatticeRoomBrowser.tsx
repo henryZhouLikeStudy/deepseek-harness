@@ -1,12 +1,15 @@
 /** Lattice room browser component. */
 import { useEffect, useRef, useState } from 'react'
 import type { LatticeRoomProps } from './contract/slots.ts'
+import type { SessionId } from '@deepseek-ai/dsh-client-runtime/client'
 import type { Room, RoomKind, RoomMember, SubagentProvider } from './stores.ts'
 import { Button, Input } from '@deepseek-ai/dsh-client-ui-primitives'
 import clsx from 'clsx'
 
 export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
-  const { useStore, actions, listProviders, sendTaskToMember, fetchChildResult, openChildSession, useSessions, useWorkspaces, t } = props
+  const {
+    useStore, actions, listProviders, sendTaskToMember, fetchChildResult, openChildSession, relay, useSessions, useWorkspaces, t,
+  } = props
   const listProvidersRef = useRef(listProviders)
   listProvidersRef.current = listProviders
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
@@ -169,9 +172,10 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
     // Dispatch to every member concurrently; each member posts its own status
     // message once its task is accepted, so a slow provider does not block the
     // rest of the room.
-    await Promise.all(activeRoom.members.map(async (member) => {
+    await Promise.all(activeRoom.members.map(async (member, memberIndex) => {
       try {
-        const { text, children } = await sendTaskToMember(activeRoom.id, member, taskInput)
+        const { text, children, childSessionId } = await sendTaskToMember(activeRoom.id, member, taskInput)
+        if (childSessionId !== undefined) actions.setMemberChildSession(activeRoom.id, memberIndex, childSessionId)
         if (children.length > 0) actions.addPendingChildren(activeRoom.id, children)
         actions.sendMessage(activeRoom.id, {
           id: `msg-status-${Date.now()}-${member.name}`,
@@ -191,6 +195,29 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
       }
     }))
     setTaskInput('')
+  }
+
+  const handleForwardResult = async (fromChildSessionId: SessionId, content: string) => {
+    if (!activeRoom) return
+    const targetName = window.prompt(t('lattice-room.forward'))
+    if (!targetName) return
+    const targetMember = activeRoom.members.find(m => m.name === targetName.trim())
+    if (targetMember === undefined) {
+      window.alert(`Member not found: ${targetName}`)
+      return
+    }
+    if (targetMember.childSessionId === undefined) {
+      window.alert('目标成员尚未建立会话')
+      return
+    }
+    const ok = await relay(fromChildSessionId, targetMember.childSessionId, content)
+    actions.sendMessage(activeRoom.id, {
+      id: `msg-forward-${Date.now()}`,
+      sender: 'system',
+      kind: 'status',
+      text: ok ? `Forwarded to ${targetMember.name}` : `Forward to ${targetMember.name} failed`,
+      createdAt: Date.now(),
+    })
   }
 
   const ungroupedRooms = rooms.filter(room => room.projectId === undefined)
@@ -249,13 +276,13 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
         <div style={{ padding: '1rem', border: '1px solid #ccc', borderRadius: '4px', marginBottom: '1rem' }}>
           <Input
             value={newRoomTitle}
-            onChange={(e) => setNewRoomTitle(e.target.value)}
+            onChange={e => setNewRoomTitle(e.target.value)}
             placeholder={t('lattice-room.roomTitle')}
             style={{ marginBottom: '0.5rem' }}
           />
           <select
             value={newRoomKind}
-            onChange={(e) => setNewRoomKind(e.target.value as RoomKind)}
+            onChange={e => setNewRoomKind(e.target.value as RoomKind)}
             style={{ padding: '0.25rem', marginBottom: '0.5rem' }}
           >
             <option value="group">{t('lattice-room.group')}</option>
@@ -359,11 +386,14 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
                           <>
                             <Input
                               value={editing.name}
-                              onChange={(e) => setEditingMember({ index: idx, name: e.target.value })}
+                              onChange={e => setEditingMember({ index: idx, name: e.target.value })}
                               style={{ padding: '0.125rem 0.25rem', width: '6rem' }}
                             />
                             <button
-                              onClick={() => { actions.renameMember(activeRoom.id, idx, editing.name.trim() || member.name); setEditingMember(null) }}
+                              onClick={() => {
+                                actions.renameMember(activeRoom.id, idx, editing.name.trim() || member.name)
+                                setEditingMember(null)
+                              }}
                               style={{ cursor: 'pointer', border: 'none', background: 'transparent' }}
                               title={t('lattice-room.save')}
                             >
@@ -401,13 +431,13 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
                   })}
                   <Input
                     value={newMemberName}
-                    onChange={(e) => setNewMemberName(e.target.value)}
+                    onChange={e => setNewMemberName(e.target.value)}
                     placeholder={t('lattice-room.memberName')}
                     style={{ padding: '0.25rem', width: '10rem' }}
                   />
                   <select
                     value={selectedProvider ?? ''}
-                    onChange={(e) => setSelectedProvider(e.target.value as SubagentProvider)}
+                    onChange={e => setSelectedProvider(e.target.value as SubagentProvider)}
                     disabled={providers === undefined}
                     style={{ padding: '0.25rem' }}
                   >
@@ -426,7 +456,7 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
                 {activeRoom.messages.length === 0 && (
                   <p style={{ color: '#666', textAlign: 'center' }}>{t('lattice-room.noMessages')}</p>
                 )}
-                {activeRoom.messages.map(msg => {
+                {activeRoom.messages.map((msg) => {
                   const childAddress = msg.childAddress
                   return (
                     <div
@@ -441,8 +471,17 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
                       }}
                       title={childAddress !== undefined ? t('lattice-room.openChild') : undefined}
                     >
-                      <div style={{ fontSize: '0.75rem', color: '#666', marginBottom: '0.25rem' }}>
-                        <strong>{msg.sender}</strong> · {msg.kind} · {new Date(msg.createdAt).toLocaleTimeString()}
+                      <div style={{ fontSize: '0.75rem', color: '#666', marginBottom: '0.25rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span><strong>{msg.sender}</strong> · {msg.kind} · {new Date(msg.createdAt).toLocaleTimeString()}</span>
+                        {childAddress !== undefined && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); void handleForwardResult(childAddress.childSessionId, msg.text) }}
+                            style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#666', fontSize: '0.75rem' }}
+                            title={t('lattice-room.forward')}
+                          >
+                            {t('lattice-room.forward')}
+                          </button>
+                        )}
                       </div>
                       <div>{msg.text}</div>
                     </div>
@@ -454,9 +493,9 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
               <div style={{ display: 'flex', gap: '0.5rem' }}>
                 <Input
                   value={taskInput}
-                  onChange={(e) => setTaskInput(e.target.value)}
+                  onChange={e => setTaskInput(e.target.value)}
                   placeholder={t('lattice-room.taskInput')}
-                  onKeyDown={(e) => e.key === 'Enter' && handleSendTask()}
+                  onKeyDown={e => e.key === 'Enter' && handleSendTask()}
                   style={{ flex: 1 }}
                 />
                 <Button onClick={handleSendTask}>{t('lattice-room.sendTask')}</Button>

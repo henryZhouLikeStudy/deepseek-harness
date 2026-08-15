@@ -73,6 +73,7 @@ import {
 import {
   latticeGroupDispatchRequestSchema,
   latticeListProvidersRequestSchema,
+  latticeRelayRequestSchema,
 } from '../api/lattice.schema.ts'
 
 /**
@@ -110,6 +111,7 @@ const UNARY_ROUTES: UnaryRoutes = {
   'subagent.interrupt': { schema: subagentInterruptRequestSchema, invoke: (api, r) => api.subagents.interrupt(r) },
   'lattice.listProviders': { schema: latticeListProvidersRequestSchema, invoke: (api, r) => api.lattice.listProviders(r) },
   'lattice.groupDispatch': { schema: latticeGroupDispatchRequestSchema, invoke: (api, r, signal) => api.lattice.groupDispatch(r, signal) },
+  'lattice.relay': { schema: latticeRelayRequestSchema, invoke: (api, r, signal) => api.lattice.relay(r, signal) },
   'host.describe': { schema: hostDescribeRequestSchema, invoke: (api, r) => api.host.describe(r) },
   'host.pickDirectory': { schema: hostPickDirectoryRequestSchema, invoke: (api, r, signal) => api.host.pickDirectory(r, signal) },
   'host.listDirectory': { schema: hostListDirectoryRequestSchema, invoke: (api, r, signal) => api.host.listDirectory(r, signal) },

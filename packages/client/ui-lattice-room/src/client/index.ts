@@ -114,19 +114,31 @@ export function apply(ctx: ClientContext): void {
       if (parentSessionId === undefined) return { text: `[${member.name}] no current session`, children: [] }
       const response = await connection.api.lattice.groupDispatch({
         parentSessionId,
-        items: [{ provider: member.provider, name: member.name, prompt: task }],
+        items: [{
+          provider: member.provider,
+          name: member.name,
+          prompt: task,
+          ...(member.childSessionId !== undefined ? { childSessionId: member.childSessionId } : {}),
+        }],
       })
       if (!response.result.ok) {
         return { text: `[${member.name}] dispatch failed: ${response.result.error.message}`, children: [] }
       }
-      const children: PendingChild[] = response.result.value.map((r) => ({
+      const children: PendingChild[] = response.result.value.map(r => ({
         memberName: member.name,
         childSessionId: r.childSessionId,
         provider: r.provider,
         parentSessionId,
       }))
       await openDispatchedChildren(parentSessionId, response.result.value)
-      return { text: `[${member.name}] dispatched to ${response.result.value.map(r => r.childSessionId).join(', ')}`, children }
+      const childSessionId = response.result.value[0]?.childSessionId
+      return { text: `[${member.name}] dispatched to ${response.result.value.map(r => r.childSessionId).join(', ')}`, children, childSessionId }
+    },
+    relay: async (fromChildSessionId, toChildSessionId, content) => {
+      const parentSessionId = currentSessionId()
+      if (parentSessionId === undefined) return false
+      const response = await connection.api.lattice.relay({ parentSessionId, fromChildSessionId, toChildSessionId, content })
+      return response.result.ok
     },
     fetchChildResult: async (parentSessionId, childSessionId) => {
       const response = await connection.api.subagents.history({
@@ -150,7 +162,7 @@ export function apply(ctx: ClientContext): void {
       name: 'sidebar.latticeRooms',
       store,
       inject: injected,
-      locale: NS
+      locale: NS,
     },
     LatticeRoomBrowser,
   ))

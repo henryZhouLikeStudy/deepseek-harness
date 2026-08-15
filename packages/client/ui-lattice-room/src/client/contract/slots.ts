@@ -22,7 +22,11 @@ export interface LatticeRoomInjected {
    * return a dispatch status string. The final assistant output is streamed
    * back separately via {@link fetchChildResult}.
    */
-  sendTaskToMember: (roomId: string, member: RoomMember, task: string) => Promise<{ text: string; children: PendingChild[] }>
+  sendTaskToMember: (roomId: string, member: RoomMember, task: string) => Promise<{
+    text: string
+    children: PendingChild[]
+    childSessionId?: SessionId
+  }>
   /**
    * Read a finished child's transcript and extract its final assistant text.
    * Returns undefined when the child produced no text output.
@@ -30,6 +34,11 @@ export interface LatticeRoomInjected {
   fetchChildResult: (parentSessionId: SessionId, childSessionId: SessionId) => Promise<string | undefined>
   /** Open a child session from a subagent address. */
   openChildSession: (address: SubagentAddress) => void
+  /**
+   * Relay a message from one child session to another under the current
+   * parent session.
+   */
+  relay: (fromChildSessionId: SessionId, toChildSessionId: SessionId, content: string) => Promise<boolean>
 }
 
 export type LatticeRoomProps =

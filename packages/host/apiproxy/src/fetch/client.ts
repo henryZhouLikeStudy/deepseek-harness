@@ -70,6 +70,7 @@ import {
 import {
   latticeGroupDispatchValueSchema,
   latticeListProvidersValueSchema,
+  latticeRelayValueSchema,
 } from '../api/lattice.schema.ts'
 
 /**
@@ -112,6 +113,7 @@ export interface IApiClient {
   lattice: {
     listProviders(payload: RequestPayload<'lattice.listProviders'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'lattice.listProviders'>>>
     groupDispatch(payload: RequestPayload<'lattice.groupDispatch'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'lattice.groupDispatch'>>>
+    relay(payload: RequestPayload<'lattice.relay'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'lattice.relay'>>>
   }
   host: {
     describe(payload: RequestPayload<'host.describe'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'host.describe'>>>
@@ -196,6 +198,7 @@ const UNARY_VALUE_SCHEMAS: { [K in keyof RpcMethodMap]: z.ZodType<Wire<ResponseV
   'subagent.interrupt': subagentInterruptValueSchema,
   'lattice.listProviders': latticeListProvidersValueSchema,
   'lattice.groupDispatch': latticeGroupDispatchValueSchema,
+  'lattice.relay': latticeRelayValueSchema,
   'host.describe': hostDescribeValueSchema,
   'host.pickDirectory': hostPickDirectoryValueSchema,
   'host.listDirectory': hostListDirectoryValueSchema,
@@ -444,6 +447,7 @@ export abstract class AbstractApiClient implements IApiClient {
   readonly lattice: IApiClient['lattice'] = {
     listProviders: (payload, signal) => this.callUnary('lattice.listProviders', payload, signal),
     groupDispatch: (payload, signal) => this.callUnary('lattice.groupDispatch', payload, signal),
+    relay: (payload, signal) => this.callUnary('lattice.relay', payload, signal),
   }
 
   readonly host: IApiClient['host'] = {

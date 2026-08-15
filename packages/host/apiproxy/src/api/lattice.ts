@@ -30,6 +30,12 @@ export interface LatticeDispatchResult {
   mode: 'one-shot' | 'continuable'
 }
 
+/** Result of relaying one message between child sessions. */
+export interface LatticeRelayResult {
+  /** The durable message id assigned to the relayed message. */
+  messageId: string
+}
+
 /** Lattice-domain unary methods (the map keys lattice.* of RpcMethodMap). */
 export interface LatticeApi {
   /**
@@ -51,4 +57,15 @@ export interface LatticeApi {
     request: RpcRequest<{ parentSessionId: SessionId; items: LatticeDispatchItem[] }>,
     signal?: AbortSignal,
   ): Promise<RpcResponse<LatticeDispatchResult[]>>
+
+  /**
+   * Relay a text message from one child session to another under the same live
+   * parent. The target must be a continuable direct child of the parent; the
+   * message is delivered as a coordinator relay so the recipient can attribute
+   * it to the sender session.
+   */
+  relay(
+    request: RpcRequest<{ parentSessionId: SessionId; fromChildSessionId: SessionId; toChildSessionId: SessionId; content: string }>,
+    signal?: AbortSignal,
+  ): Promise<RpcResponse<LatticeRelayResult>>
 }
