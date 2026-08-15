@@ -100,6 +100,8 @@ export interface RpcErrorDetailsMap {
   'subagent-delivery-unavailable': { childSessionId: SessionId }
   'lattice-parent-not-found': { parentSessionId: SessionId }
   'lattice-provider-unavailable': { provider: string }
+  'lattice-self-relay': {}
+  'lattice-too-many-dispatch-items': { max: number }
   'internal': {}
 }
 

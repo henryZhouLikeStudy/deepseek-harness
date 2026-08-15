@@ -178,11 +178,17 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
 
     // Dispatch to every member concurrently; each member posts its own status
     // message once its task is accepted, so a slow provider does not block the
-    // rest of the room.
-    await Promise.all(activeRoom.members.map(async (member, memberIndex) => {
+    // rest of the room. Snapshot the roster first and relocate each member by
+    // identity after the async dispatch so a concurrent reorder does not write
+    // the child session id to the wrong array index.
+    const membersSnapshot = [...activeRoom.members]
+    await Promise.all(membersSnapshot.map(async (member) => {
       try {
         const { text, children, childSessionId } = await sendTaskToMember(activeRoom.id, member, taskInput)
-        if (childSessionId !== undefined) actions.setMemberChildSession(activeRoom.id, memberIndex, childSessionId)
+        const currentIndex = activeRoom.members.findIndex(m => m.provider === member.provider && m.name === member.name)
+        if (childSessionId !== undefined && currentIndex !== -1) {
+          actions.setMemberChildSession(activeRoom.id, currentIndex, childSessionId)
+        }
         if (children.length > 0) actions.addPendingChildren(activeRoom.id, children)
         actions.sendMessage(activeRoom.id, {
           id: `msg-status-${nextMsgSuffix()}-${member.name}`,

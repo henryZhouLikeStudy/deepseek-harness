@@ -2806,6 +2806,14 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
 
       async groupDispatch(request, signal) {
         const { parentSessionId, items } = request.payload
+        const MAX_DISPATCH_ITEMS = 64
+        if (items.length > MAX_DISPATCH_ITEMS) {
+          return err(request, {
+            code: 'lattice-too-many-dispatch-items',
+            message: 'too many dispatch items',
+            details: { max: MAX_DISPATCH_ITEMS },
+          })
+        }
         const parentAgent = ctx.agents.get(parentSessionId)
         if (parentAgent === undefined) {
           return err(request, {
@@ -2908,6 +2916,13 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
 
       async relay(request, signal) {
         const { parentSessionId, fromChildSessionId, toChildSessionId, content } = request.payload
+        if (fromChildSessionId === toChildSessionId) {
+          return err(request, {
+            code: 'lattice-self-relay',
+            message: 'cannot relay a child to itself',
+            details: {},
+          })
+        }
         const parentAgent = ctx.agents.get(parentSessionId)
         if (parentAgent === undefined) {
           return err(request, {
