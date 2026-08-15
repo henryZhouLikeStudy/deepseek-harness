@@ -47,6 +47,8 @@ export interface Room {
   title: string
   kind: RoomKind
   projectId?: string
+  /** Display title of the owning project, captured at create time for grouping. */
+  projectTitle?: string
   members: RoomMember[]
   messages: RoomMessage[]
 }

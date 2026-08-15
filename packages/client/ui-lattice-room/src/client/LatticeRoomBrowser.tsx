@@ -6,7 +6,7 @@ import { Button, Input } from '@deepseek-ai/dsh-client-ui-primitives'
 import clsx from 'clsx'
 
 export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
-  const { useStore, actions, listProviders, sendTaskToMember, fetchChildResult, openChildSession, useSessions, t } = props
+  const { useStore, actions, listProviders, sendTaskToMember, fetchChildResult, openChildSession, useSessions, useWorkspaces, t } = props
   const listProvidersRef = useRef(listProviders)
   listProvidersRef.current = listProviders
   const state = useStore(s => s)
@@ -14,6 +14,7 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
   const activeRoom = state.activeRoomId ? state.rooms[state.activeRoomId] : null
 
   const sessionsById = useSessions(s => s.byId)
+  const workspaces = useWorkspaces(s => s.items)
 
   const [showCreateDialog, setShowCreateDialog] = useState(false)
   const [newRoomTitle, setNewRoomTitle] = useState('')
@@ -21,6 +22,7 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
   const [selectedProvider, setSelectedProvider] = useState<SubagentProvider | null>(null)
   const [newMemberName, setNewMemberName] = useState('')
   const [newRoomKind, setNewRoomKind] = useState<RoomKind>('group')
+  const [newRoomProject, setNewRoomProject] = useState<{ id: string; title: string } | null>(null)
   const [providers, setProviders] = useState<SubagentProvider[] | undefined>(undefined)
   const [providersError, setProvidersError] = useState<string | undefined>(undefined)
 
@@ -93,12 +95,15 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
       id: `room-${Date.now()}`,
       title: newRoomTitle,
       kind: newRoomKind,
+      projectId: newRoomProject?.id,
+      projectTitle: newRoomProject?.title,
       members: [],
       messages: [],
     }
     actions.createRoom(room)
     setNewRoomTitle('')
     setNewRoomKind('group')
+    setNewRoomProject(null)
     setShowCreateDialog(false)
   }
 
@@ -165,6 +170,51 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
     setTaskInput('')
   }
 
+  const ungroupedRooms = rooms.filter(room => room.projectId === undefined)
+  const projectGroups = rooms.reduce<Array<{ projectId: string; title: string; rooms: Room[] }>>((groups, room) => {
+    const pid = room.projectId
+    if (pid === undefined) return groups
+    let group = groups.find(g => g.projectId === pid)
+    if (!group) {
+      group = { projectId: pid, title: room.projectTitle ?? pid, rooms: [] }
+      groups.push(group)
+    }
+    group.rooms.push(room)
+    return groups
+  }, [])
+
+  const roomItem = (room: Room) => (
+    <div
+      key={room.id}
+      onClick={() => actions.openRoom(room.id)}
+      style={{
+        padding: '0.5rem',
+        cursor: 'pointer',
+        borderRadius: '4px',
+        marginBottom: '0.25rem',
+        backgroundColor: activeRoom?.id === room.id ? '#e0e0e0' : 'transparent',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: '0.25rem',
+      }}
+    >
+      <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {room.title}
+        <span style={{ fontSize: '0.7rem', color: '#999', marginLeft: '0.25rem' }}>
+          {room.kind === '1:1' ? t('lattice-room.oneOnOne') : t('lattice-room.group')}
+        </span>
+      </span>
+      <button
+        onClick={(e) => { e.stopPropagation(); actions.deleteRoom(room.id) }}
+        style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#999' }}
+        aria-label={t('lattice-room.delete')}
+      >
+        ×
+      </button>
+    </div>
+  )
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', padding: '1rem' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
@@ -187,6 +237,20 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
           >
             <option value="group">{t('lattice-room.group')}</option>
             <option value="1:1">{t('lattice-room.oneOnOne')}</option>
+          </select>
+          <select
+            value={newRoomProject?.id ?? ''}
+            onChange={(e) => {
+              const id = e.target.value
+              const ws = workspaces.find(w => w.workspaceId === id)
+              setNewRoomProject(id === '' ? null : { id, title: ws?.title ?? id })
+            }}
+            style={{ padding: '0.25rem', marginBottom: '0.5rem' }}
+          >
+            <option value="">{t('lattice-room.noProject')}</option>
+            {workspaces.map(ws => (
+              <option key={ws.workspaceId} value={ws.workspaceId}>{ws.title}</option>
+            ))}
           </select>
           <div style={{ display: 'flex', gap: '0.5rem' }}>
             <Button onClick={handleCreateRoom}>{t('lattice-room.create')}</Button>
@@ -217,35 +281,16 @@ export function LatticeRoomBrowser(props: LatticeRoomProps): JSX.Element {
 
           <h3 style={{ marginTop: '1rem' }}>Rooms</h3>
           {rooms.length === 0 && <p style={{ fontSize: '0.875rem', color: '#666' }}>{t('lattice-room.noRooms')}</p>}
-          {rooms.map(room => (
-            <div
-              key={room.id}
-              onClick={() => actions.openRoom(room.id)}
-              style={{
-                padding: '0.5rem',
-                cursor: 'pointer',
-                borderRadius: '4px',
-                marginBottom: '0.25rem',
-                backgroundColor: activeRoom?.id === room.id ? '#e0e0e0' : 'transparent',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                gap: '0.25rem',
-              }}
-            >
-              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {room.title}
-                <span style={{ fontSize: '0.7rem', color: '#999', marginLeft: '0.25rem' }}>
-                  {room.kind === '1:1' ? t('lattice-room.oneOnOne') : t('lattice-room.group')}
-                </span>
-              </span>
-              <button
-                onClick={(e) => { e.stopPropagation(); actions.deleteRoom(room.id) }}
-                style={{ border: 'none', background: 'transparent', cursor: 'pointer', color: '#999' }}
-                aria-label={t('lattice-room.delete')}
-              >
-                ×
-              </button>
+          {ungroupedRooms.length > 0 && (
+            <>
+              <div style={{ fontSize: '0.75rem', color: '#999', margin: '0.5rem 0 0.25rem' }}>{t('lattice-room.noProject')}</div>
+              {ungroupedRooms.map(roomItem)}
+            </>
+          )}
+          {projectGroups.map(group => (
+            <div key={group.projectId}>
+              <div style={{ fontSize: '0.75rem', color: '#999', margin: '0.5rem 0 0.25rem' }}>{group.title}</div>
+              {group.rooms.map(roomItem)}
             </div>
           ))}
         </div>
