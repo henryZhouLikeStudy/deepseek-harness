@@ -14,7 +14,7 @@ function resolveDshBin(): string {
   }
 
   // Packaged app: dsh is shipped as an extra resource under Electron's resources dir.
-  const packagedBin = path.join(process.resourcesPath, 'apps', 'cli', 'lib', 'bin.js')
+  const packagedBin = path.join(process.resourcesPath, 'apps', 'desktop', 'dsh-runtime', 'lib', 'bin.js')
   if (existsSync(packagedBin)) {
     return packagedBin
   }

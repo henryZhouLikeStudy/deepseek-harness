@@ -41,6 +41,9 @@ jobs:
       - name: Build web frontend
         run: pnpm run build:web
 
+      - name: Deploy dsh runtime
+        run: pnpm --filter @deepseek-ai/dsh deploy --prod apps/desktop/dsh-runtime
+
       - name: Build desktop main process
         working-directory: apps/desktop
         run: pnpm run build

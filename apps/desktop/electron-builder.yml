@@ -6,16 +6,14 @@ files:
   - dist/main.js
   - package.json
 extraResources:
-  - from: '../../apps/cli/lib'
-    to: 'apps/cli/lib'
-  - from: '../../apps/cli/config'
-    to: 'apps/cli/config'
-  - from: '../../apps/cli/package.json'
-    to: 'apps/cli/package.json'
+  - from: '../../apps/desktop/dsh-runtime/lib'
+    to: 'apps/desktop/dsh-runtime/lib'
+  - from: '../../apps/desktop/dsh-runtime/config'
+    to: 'apps/desktop/dsh-runtime/config'
+  - from: '../../apps/desktop/dsh-runtime/node_modules'
+    to: 'apps/desktop/dsh-runtime/node_modules'
   - from: '../../apps/web/dist'
     to: 'apps/web/dist'
-  - from: '../../node_modules'
-    to: 'node_modules'
 asar: false
 win:
   target: nsis
