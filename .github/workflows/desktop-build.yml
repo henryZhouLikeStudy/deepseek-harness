@@ -19,8 +19,13 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - uses: pnpm/action-setup@v4
+      # pnpm/action-setup is for pnpm v10 and older; v11+ needs the standalone
+      # pnpm/setup action, which reads packageManager and installs the matching
+      # self-contained binary. Keep install: false because we run pnpm install
+      # in a dedicated step.
+      - uses: pnpm/setup@v2
         with:
+          install: false
           dest: ${{ runner.temp }}/setup-pnpm
 
       - uses: actions/setup-node@v6
