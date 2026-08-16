@@ -16,7 +16,6 @@ function request<P>(payload: P): RpcRequest<P> {
 }
 
 function bench(options: {
-  providers?: string[]
   entries?: object[]
   listError?: Error
   followupError?: Error
@@ -45,7 +44,6 @@ function bench(options: {
   ctx.provide('agents', { get: (id: SessionId) => id === PARENT ? parent : undefined })
   ctx.provide('userQuestions', { registerProvider: () => () => {} })
   ctx.provide('subagents', {
-    list: () => options.providers ?? ['spawn'],
     listChildren,
     followup,
     startContinuable,
@@ -120,6 +118,24 @@ describe('lattice groupDispatch', () => {
       },
     })
     expect(followup).toHaveBeenCalledOnce()
+  })
+
+  it('maps SUBAGENT_CONTROL_PROJECTIONS_UNAVAILABLE to projectionsUnavailableError', async () => {
+    const { api, listChildren, startContinuable, followup } = bench({
+      listError: new SubagentError('projections unavailable', 'SUBAGENT_CONTROL_PROJECTIONS_UNAVAILABLE'),
+    })
+    const response = await api.lattice.groupDispatch(request({
+      parentSessionId: PARENT,
+      items: [{ provider: 'spawn', name: 'a', prompt: 'go' }],
+    }))
+    expect(response.result.ok).toBe(false)
+    if (!response.result.ok) {
+      expect(response.result.error).toMatchObject({ code: 'internal', details: {} })
+      expect(response.result.error.message).toContain('subagent catalog is unavailable')
+    }
+    expect(listChildren).toHaveBeenCalledOnce()
+    expect(startContinuable).not.toHaveBeenCalled()
+    expect(followup).not.toHaveBeenCalled()
   })
 })
 
