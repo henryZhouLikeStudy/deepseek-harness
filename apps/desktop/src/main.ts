@@ -13,6 +13,17 @@ function resolveDshBin(): string {
     return process.env.DSH_BIN
   }
 
+  // Packaged app: dsh is shipped as an extra resource under Electron's resources dir.
+  const packagedBin = path.join(process.resourcesPath, 'apps', 'cli', 'lib', 'bin.js')
+  if (existsSync(packagedBin)) {
+    return packagedBin
+  }
+
+  const packagedNodeModulesBin = path.join(process.resourcesPath, 'node_modules', '.bin', 'dsh')
+  if (existsSync(packagedNodeModulesBin)) {
+    return packagedNodeModulesBin
+  }
+
   // Built main lives at apps/desktop/dist/main.js; three levels up reaches the repo root.
   const repoRelative = path.resolve(
     path.dirname(fileURLToPath(import.meta.url)),
@@ -75,7 +86,7 @@ function boot(): void {
 
   child = spawn(process.execPath, [dshBin, 'web', '--port', '0'], {
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: process.env,
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: String(1) },
   })
 
   child.on('error', (err) => {

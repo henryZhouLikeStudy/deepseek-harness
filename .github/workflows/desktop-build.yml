@@ -1,0 +1,52 @@
+name: Desktop Build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PRIMARY_NODE_VERSION: '24'
+
+jobs:
+  build:
+    name: Build Desktop Installer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v4
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.PRIMARY_NODE_VERSION }}
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Build host and client libraries
+        run: pnpm run build:lib
+
+      - name: Build web frontend
+        run: pnpm run build:web
+
+      - name: Build desktop main process
+        working-directory: apps/desktop
+        run: pnpm run build
+
+      - name: Build desktop installer
+        working-directory: apps/desktop
+        run: npx electron-builder --win nsis
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dsh-desktop-installer
+          path: apps/desktop/dist/release/*.exe
+          if-no-files-found: error
+          retention-days: 7
