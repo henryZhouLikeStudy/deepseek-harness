@@ -42,7 +42,7 @@ jobs:
         run: pnpm run build:web
 
       - name: Deploy dsh runtime
-        run: pnpm --filter @deepseek-ai/dsh deploy --prod --legacy apps/desktop/dsh-runtime
+        run: pnpm --filter @deepseek-ai/dsh deploy --prod --legacy --ignore-scripts apps/desktop/dsh-runtime
 
       - name: Build desktop main process
         working-directory: apps/desktop
