@@ -458,11 +458,32 @@ async function buildClosure(staging, sourceNodeModules, fallbackNodeModules) {
 
     const existing = closure.get(name)
     if (existing !== undefined) {
-      // Only realpaths explicitly validated by findSourceResolutionContext at
-      // insertion time (same package in the configured sourceDirs) are accepted
-      // as aliases. Any other different realpath is a conflict, even if its
-      // manifest happens to share the same name and version.
       if (!existing.equivalentRealDirs.has(resolved.realDir)) {
+        // Revalidate against the configured source roots: both packages are
+        // aliases only if they resolve to the same validated source realpath.
+        // A matching name+version alone is not enough; the shared origin must
+        // be discoverable through sourceDirs.
+        const existingManifest = JSON.parse(await readFile(join(existing.dir, 'package.json'), 'utf8'))
+        const resolvedManifest = JSON.parse(await readFile(join(resolved.dir, 'package.json'), 'utf8'))
+        const existingSourceContext = await findSourceResolutionContext(
+          existingManifest.name,
+          existingManifest.version,
+          sourceDirs,
+        )
+        const resolvedSourceContext = await findSourceResolutionContext(
+          resolvedManifest.name,
+          resolvedManifest.version,
+          sourceDirs,
+        )
+        if (
+          existingSourceContext !== undefined
+          && resolvedSourceContext !== undefined
+          && existingSourceContext === resolvedSourceContext
+        ) {
+          existing.equivalentRealDirs.add(existing.realDir)
+          existing.equivalentRealDirs.add(resolved.realDir)
+          continue
+        }
         throw new Error(
           `dependency ${name} resolves to conflicting realpaths: ${existing.realDir} and ${resolved.realDir}`,
         )

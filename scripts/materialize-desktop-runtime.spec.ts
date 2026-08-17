@@ -739,6 +739,95 @@ describe('materialize-desktop-runtime.mjs', () => {
     }
   })
 
+  it('accepts a pnpm source alias reached before the hoisted staging copy', () => {
+    const source = makeTemp('dsh-runtime-pnpm-alias-source')
+    const workspaceRoot = makeTemp('dsh-runtime-pnpm-alias-workspace-root')
+    const sourceNodeModules = join(workspaceRoot, 'source-node-modules')
+    const destination = makeTemp('dsh-runtime-pnpm-alias-dest')
+
+    try {
+      mkdirSync(sourceNodeModules, { recursive: true })
+      mkdirSync(join(source, 'lib'), { recursive: true })
+      mkdirSync(join(source, 'config'), { recursive: true })
+      mkdirSync(join(source, 'node_modules'), { recursive: true })
+      // List parent-pkg first so it is queued before the direct js-yaml root
+      // dependency. js-yaml is then reached transitively through the pnpm
+      // virtual-store context before the staging root copy is examined.
+      writeJson(join(source, 'package.json'), {
+        name: '@deepseek-ai/dsh',
+        version: '9.4.0-test',
+        dependencies: { 'parent-pkg': '^1.0.0', 'js-yaml': '^4.2.0' },
+      })
+
+      const pnpmStore = join(workspaceRoot, 'node_modules', '.pnpm')
+
+      // js-yaml in the pnpm store.
+      const jsYamlStore = join(pnpmStore, 'js-yaml@4.2.0', 'node_modules', 'js-yaml')
+      mkdirSync(jsYamlStore, { recursive: true })
+      writeJson(join(jsYamlStore, 'package.json'), {
+        name: 'js-yaml',
+        version: '4.2.0',
+        type: 'module',
+        exports: { '.': './index.mjs' },
+      })
+      writeFileSync(join(jsYamlStore, 'index.mjs'), 'export const value = "yaml-ok";\n')
+      symlinkSync(jsYamlStore, join(sourceNodeModules, 'js-yaml'), 'junction')
+
+      // parent-pkg in the pnpm store depends on the same js-yaml store entry.
+      const parentPkgStore = join(pnpmStore, 'parent-pkg@1.0.0', 'node_modules', 'parent-pkg')
+      mkdirSync(parentPkgStore, { recursive: true })
+      writeJson(join(parentPkgStore, 'package.json'), {
+        name: 'parent-pkg',
+        version: '1.0.0',
+        type: 'module',
+        exports: { '.': './index.mjs' },
+        dependencies: { 'js-yaml': '^4.2.0' },
+      })
+      writeFileSync(join(parentPkgStore, 'index.mjs'), 'export * from "js-yaml";\n')
+      mkdirSync(join(parentPkgStore, 'node_modules'), { recursive: true })
+      symlinkSync(jsYamlStore, join(parentPkgStore, 'node_modules', 'js-yaml'), 'junction')
+      symlinkSync(parentPkgStore, join(sourceNodeModules, 'parent-pkg'), 'junction')
+
+      // Staging root has hoisted real copies with no nested node_modules.
+      mkdirSync(join(source, 'node_modules', 'js-yaml'), { recursive: true })
+      writeJson(join(source, 'node_modules', 'js-yaml', 'package.json'), {
+        name: 'js-yaml',
+        version: '4.2.0',
+        type: 'module',
+        exports: { '.': './index.mjs' },
+      })
+      writeFileSync(join(source, 'node_modules', 'js-yaml', 'index.mjs'), 'export const value = "yaml-ok";\n')
+
+      mkdirSync(join(source, 'node_modules', 'parent-pkg'), { recursive: true })
+      writeJson(join(source, 'node_modules', 'parent-pkg', 'package.json'), {
+        name: 'parent-pkg',
+        version: '1.0.0',
+        type: 'module',
+        exports: { '.': './index.mjs' },
+        dependencies: { 'js-yaml': '^4.2.0' },
+      })
+      writeFileSync(join(source, 'node_modules', 'parent-pkg', 'index.mjs'), 'export * from "js-yaml";\n')
+
+      writeFileSync(
+        join(source, 'lib', 'bin.js'),
+        'import { value as direct } from "js-yaml"; import { value as indirect } from "parent-pkg"; console.log(`${direct}:${indirect}`);',
+      )
+
+      const result = spawnSync(
+        process.execPath,
+        buildBaseArgs(source, destination, sourceNodeModules),
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+      )
+
+      expect(result.status).toBe(0)
+      expect(result.stdout).toContain('staged CLI smoke output: yaml-ok:yaml-ok')
+    } finally {
+      rmSync(source, { recursive: true, force: true })
+      rmSync(workspaceRoot, { recursive: true, force: true })
+      rmSync(destination, { recursive: true, force: true })
+    }
+  })
+
   it('treats validated staging and source realpaths of the same package as equivalent aliases', () => {
     const source = makeTemp('dsh-runtime-equivalent-alias-source')
     const workspaceRoot = makeTemp('dsh-runtime-equivalent-alias-workspace-root')
