@@ -68,7 +68,7 @@ jobs:
         env:
           # Same guard for any pnpm subprocess that electron-builder may spawn.
           pnpm_config_verify_deps_before_run: false
-        run: npx electron-builder --win nsis
+        run: npx electron-builder --win nsis --publish never
 
       - uses: actions/upload-artifact@v4
         with:
