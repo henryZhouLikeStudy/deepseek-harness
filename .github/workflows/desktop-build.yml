@@ -47,10 +47,10 @@ jobs:
           # self-contained. We keep the workspace-level setting disabled to
           # avoid stale copies and lock churn across the repo.
           pnpm_config_inject_workspace_packages: true
-        run: pnpm --filter @deepseek-ai/dsh deploy --prod --legacy --ignore-scripts apps/desktop/dsh-runtime-staging
+        run: pnpm --config.node-linker=hoisted --config.link-workspace-packages=true --filter @deepseek-ai/dsh deploy --prod --legacy --ignore-scripts apps/desktop/dsh-runtime-staging
 
       - name: Materialize dsh runtime
-        run: node scripts/materialize-desktop-runtime.mjs --from apps/desktop/dsh-runtime-staging --to apps/desktop/dsh-runtime
+        run: node scripts/materialize-desktop-runtime.mjs --from apps/desktop/dsh-runtime-staging --to apps/desktop/dsh-runtime --source-node-modules apps/cli/node_modules --fallback-node-modules node_modules --smoke-command "web --help"
 
       - name: Build desktop main process
         working-directory: apps/desktop

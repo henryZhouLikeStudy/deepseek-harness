@@ -14,13 +14,15 @@ The desktop installer must ship the `dsh` CLI runtime under `resources/apps/desk
 
 Remove `injectWorkspacePackages` from `pnpm-workspace.yaml` and keep `linkWorkspacePackages: true`; regenerate `pnpm-lock.yaml` so workspace dependencies resolve as links during normal development.
 
-Deploy the CLI to a staging directory, `apps/desktop/dsh-runtime-staging`, with the existing `--prod --legacy --ignore-scripts` flags. The deploy step sets `pnpm_config_inject_workspace_packages=true` so workspace packages are inlined into the staging tree for packaging, without forcing the whole repository back to the stale-copy layout. Then run `scripts/materialize-desktop-runtime.mjs`, which:
+Deploy the CLI to a staging directory, `apps/desktop/dsh-runtime-staging`, with the existing `--prod --legacy --ignore-scripts` flags plus `--config.node-linker=hoisted` and `--config.link-workspace-packages=true`. The deploy step sets `pnpm_config_inject_workspace_packages=true` so workspace packages are inlined into the staging tree for packaging, without forcing the whole repository back to the stale-copy layout. Then run `scripts/materialize-desktop-runtime.mjs --from apps/desktop/dsh-runtime-staging --to apps/desktop/dsh-runtime --source-node-modules apps/cli/node_modules --fallback-node-modules node_modules --smoke-command "web --help"`, which:
 
-1. Verifies that the staging tree contains `package.json`, `lib`, `config`, and `node_modules`.
-2. Removes any previous `apps/desktop/dsh-runtime`.
-3. Recursively copies the staging tree into `apps/desktop/dsh-runtime` while dereferencing every symlink and junction; a `Set` of source realpaths currently being copied breaks cyclic peer-dependency links that pnpm creates inside `.pnpm`.
-4. Traverses the materialized tree and asserts that no symbolic link or junction remains.
-5. Runs `node <dest>/lib/bin.js --version` and prints the reported version to prove the runtime executes in isolation.
+1. Builds the complete production + required peer dependency closure from the staged manifest, resolving each dependency relative to its parent package so pnpm virtual-store layouts are handled correctly.
+2. Copies any missing closure packages into the staging root, skipping nested package-local `node_modules` so dependencies stay hoisted.
+3. Verifies that the staging tree contains `package.json`, `lib`, `config`, and `node_modules`.
+4. Removes any previous `apps/desktop/dsh-runtime`.
+5. Recursively copies the staging tree into `apps/desktop/dsh-runtime` while dereferencing every symlink and junction; a `Set` of source realpaths currently being copied breaks cyclic peer-dependency links that pnpm creates inside `.pnpm`.
+6. Traverses the materialized tree and asserts that no symbolic link or junction remains.
+7. Runs `node <dest>/lib/bin.js web --help` and prints the output to prove the runtime executes in isolation and can load the web profile.
 
 `electron-builder.yml` packages the whole materialized `dsh-runtime` directory as a single `extraResources` entry instead of selecting subdirectories, so `package.json` is included and the relative paths expected by `lib/bin.js` stay valid.
 

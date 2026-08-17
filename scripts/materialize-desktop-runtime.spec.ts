@@ -20,9 +20,18 @@ function isSymlink(path: string) {
   return lstatSync(path, { throwIfNoEntry: false })?.isSymbolicLink() ?? false
 }
 
+function buildBaseArgs(source: string, destination: string, sourceNodeModules: string, fallbackNodeModules?: string) {
+  const args = [SCRIPT, '--from', source, '--to', destination, '--source-node-modules', sourceNodeModules]
+  if (fallbackNodeModules !== undefined) {
+    args.push('--fallback-node-modules', fallbackNodeModules)
+  }
+  return args
+}
+
 describe('materialize-desktop-runtime.mjs', () => {
   it('dereferences symlinks and verifies the staged CLI', () => {
     const source = makeTemp('dsh-runtime-source')
+    const sourceNodeModules = makeTemp('dsh-runtime-source-node-modules')
     const external = makeTemp('dsh-runtime-external')
     const destination = makeTemp('dsh-runtime-dest')
 
@@ -45,12 +54,12 @@ describe('materialize-desktop-runtime.mjs', () => {
 
       const result = spawnSync(
         process.execPath,
-        [SCRIPT, '--from', source, '--to', destination],
+        buildBaseArgs(source, destination, sourceNodeModules),
         { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
       )
 
       expect(result.status).toBe(0)
-      expect(result.stdout).toContain('staged CLI version: 9.9.9-test')
+      expect(result.stdout).toContain('staged CLI smoke output: 9.9.9-test')
       expect(result.stdout).toContain('is fully materialized')
 
       expect(isSymlink(join(destination, 'node_modules', 'external-dep'))).toBe(false)
@@ -59,13 +68,479 @@ describe('materialize-desktop-runtime.mjs', () => {
       expect(lstatSync(join(destination, 'package.json')).isFile()).toBe(true)
     } finally {
       rmSync(source, { recursive: true, force: true })
+      rmSync(sourceNodeModules, { recursive: true, force: true })
       rmSync(external, { recursive: true, force: true })
+      rmSync(destination, { recursive: true, force: true })
+    }
+  })
+
+  it('restores the full dependency closure so the staged CLI can import a transitive package', () => {
+    const source = makeTemp('dsh-runtime-closure-source')
+    const sourceNodeModules = makeTemp('dsh-runtime-closure-source-node-modules')
+    const fallbackNodeModules = makeTemp('dsh-runtime-closure-fallback-node-modules')
+    const virtualStore = makeTemp('dsh-runtime-closure-virtual-store')
+    const destination = makeTemp('dsh-runtime-closure-dest')
+
+    try {
+      mkdirSync(join(source, 'lib'), { recursive: true })
+      mkdirSync(join(source, 'config'), { recursive: true })
+      mkdirSync(join(source, 'node_modules'), { recursive: true })
+      writeJson(join(source, 'package.json'), {
+        name: '@deepseek-ai/dsh',
+        version: '3.0.0-test',
+        dependencies: { 'direct-pkg': '^1.0.0' },
+      })
+
+      // Model pnpm's virtual-store layout: the staging node_modules entry is a
+      // junction to the real package, and its dependencies live in the virtual
+      // store context's sibling node_modules directory.
+      const directPkgReal = join(virtualStore, 'direct-pkg@1.0.0', 'node_modules', 'direct-pkg')
+      mkdirSync(directPkgReal, { recursive: true })
+      writeJson(join(directPkgReal, 'package.json'), {
+        name: 'direct-pkg',
+        type: 'module',
+        exports: { '.': './index.mjs' },
+        dependencies: { 'transitive-pkg': '^1.0.0' },
+      })
+      writeFileSync(
+        join(directPkgReal, 'index.mjs'),
+        'export * from "transitive-pkg";\n',
+      )
+      symlinkSync(directPkgReal, join(source, 'node_modules', 'direct-pkg'), 'junction')
+
+      const transitivePkgReal = join(virtualStore, 'direct-pkg@1.0.0', 'node_modules', 'transitive-pkg')
+      mkdirSync(transitivePkgReal, { recursive: true })
+      writeJson(join(transitivePkgReal, 'package.json'), {
+        name: 'transitive-pkg',
+        type: 'module',
+        exports: { '.': './index.mjs' },
+      })
+      writeFileSync(
+        join(transitivePkgReal, 'index.mjs'),
+        'export const value = "transitive-ok";\n',
+      )
+
+      // The staged CLI imports through direct-pkg, which imports transitive-pkg,
+      // and also imports transitive-pkg directly to prove it is resolvable.
+      writeFileSync(
+        join(source, 'lib', 'bin.js'),
+        'import { value as indirect } from "direct-pkg"; import { value as direct } from "transitive-pkg"; console.log(`${indirect}:${direct}`);',
+      )
+
+      const result = spawnSync(
+        process.execPath,
+        buildBaseArgs(source, destination, sourceNodeModules, fallbackNodeModules),
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+      )
+
+      expect(result.status).toBe(0)
+      expect(result.stdout).toContain('restored closure packages: transitive-pkg')
+      expect(result.stdout).toContain('staged CLI smoke output: transitive-ok:transitive-ok')
+      expect(lstatSync(join(destination, 'node_modules', 'transitive-pkg', 'index.mjs')).isFile()).toBe(true)
+    } finally {
+      rmSync(source, { recursive: true, force: true })
+      rmSync(sourceNodeModules, { recursive: true, force: true })
+      rmSync(fallbackNodeModules, { recursive: true, force: true })
+      rmSync(virtualStore, { recursive: true, force: true })
+      rmSync(destination, { recursive: true, force: true })
+    }
+  })
+
+  it('skips missing optional dependencies and includes installed optional dependencies', () => {
+    const source = makeTemp('dsh-runtime-optional-source')
+    const sourceNodeModules = makeTemp('dsh-runtime-optional-source-node-modules')
+    const destination = makeTemp('dsh-runtime-optional-dest')
+
+    try {
+      mkdirSync(join(source, 'lib'), { recursive: true })
+      mkdirSync(join(source, 'config'), { recursive: true })
+      mkdirSync(join(source, 'node_modules'), { recursive: true })
+      writeJson(join(source, 'package.json'), {
+        name: '@deepseek-ai/dsh',
+        version: '4.0.0-test',
+        optionalDependencies: {
+          'missing-opt': '^1.0.0',
+          'present-opt': '^1.0.0',
+        },
+      })
+
+      // present-opt is installed in the explicit source root.
+      mkdirSync(join(sourceNodeModules, 'present-opt'), { recursive: true })
+      writeJson(join(sourceNodeModules, 'present-opt', 'package.json'), {
+        name: 'present-opt',
+        type: 'module',
+        exports: { '.': './index.mjs' },
+      })
+      writeFileSync(
+        join(sourceNodeModules, 'present-opt', 'index.mjs'),
+        'export const value = "opt-ok";\n',
+      )
+
+      writeFileSync(
+        join(source, 'lib', 'bin.js'),
+        'import { value } from "present-opt"; console.log(value);',
+      )
+
+      const result = spawnSync(
+        process.execPath,
+        buildBaseArgs(source, destination, sourceNodeModules),
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+      )
+
+      expect(result.status).toBe(0)
+      expect(result.stdout).toContain('restored closure packages: present-opt')
+      expect(result.stdout).not.toContain('missing-opt')
+      expect(result.stdout).toContain('staged CLI smoke output: opt-ok')
+      expect(lstatSync(join(destination, 'node_modules', 'present-opt', 'index.mjs')).isFile()).toBe(true)
+    } finally {
+      rmSync(source, { recursive: true, force: true })
+      rmSync(sourceNodeModules, { recursive: true, force: true })
+      rmSync(destination, { recursive: true, force: true })
+    }
+  })
+
+  it('treats a name in both dependencies and optionalDependencies as optional', () => {
+    const source = makeTemp('dsh-runtime-overlap-source')
+    const sourceNodeModules = makeTemp('dsh-runtime-overlap-source-node-modules')
+    const destination = makeTemp('dsh-runtime-overlap-dest')
+
+    try {
+      mkdirSync(join(source, 'lib'), { recursive: true })
+      mkdirSync(join(source, 'config'), { recursive: true })
+      mkdirSync(join(source, 'node_modules'), { recursive: true })
+      writeJson(join(source, 'package.json'), {
+        name: '@deepseek-ai/dsh',
+        version: '4.1.0-test',
+        dependencies: { 'overlap': '^1.0.0', 'regular-dep': '^1.0.0' },
+        optionalDependencies: { 'overlap': '^1.0.0' },
+      })
+
+      // regular-dep is present and required; overlap is missing but optional.
+      mkdirSync(join(sourceNodeModules, 'regular-dep'), { recursive: true })
+      writeJson(join(sourceNodeModules, 'regular-dep', 'package.json'), {
+        name: 'regular-dep',
+        type: 'module',
+        exports: { '.': './index.mjs' },
+      })
+      writeFileSync(
+        join(sourceNodeModules, 'regular-dep', 'index.mjs'),
+        'export const value = "regular-ok";\n',
+      )
+
+      writeFileSync(
+        join(source, 'lib', 'bin.js'),
+        'import { value } from "regular-dep"; console.log(value);',
+      )
+
+      const result = spawnSync(
+        process.execPath,
+        buildBaseArgs(source, destination, sourceNodeModules),
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+      )
+
+      expect(result.status).toBe(0)
+      expect(result.stdout).toContain('restored closure packages: regular-dep')
+      expect(result.stdout).not.toContain('restored closure packages: overlap')
+      expect(result.stdout).toContain('staged CLI smoke output: regular-ok')
+    } finally {
+      rmSync(source, { recursive: true, force: true })
+      rmSync(sourceNodeModules, { recursive: true, force: true })
+      rmSync(destination, { recursive: true, force: true })
+    }
+  })
+
+  it('treats transitive overlapping dependencies/optionalDependencies as optional', () => {
+    const source = makeTemp('dsh-runtime-transitive-overlap-source')
+    const sourceNodeModules = makeTemp('dsh-runtime-transitive-overlap-source-node-modules')
+    const destination = makeTemp('dsh-runtime-transitive-overlap-dest')
+
+    try {
+      mkdirSync(join(source, 'lib'), { recursive: true })
+      mkdirSync(join(source, 'config'), { recursive: true })
+      mkdirSync(join(source, 'node_modules'), { recursive: true })
+      writeJson(join(source, 'package.json'), {
+        name: '@deepseek-ai/dsh',
+        version: '4.2.0-test',
+        dependencies: { 'direct-pkg': '^1.0.0' },
+      })
+
+      mkdirSync(join(source, 'node_modules', 'direct-pkg'), { recursive: true })
+      writeJson(join(source, 'node_modules', 'direct-pkg', 'package.json'), {
+        name: 'direct-pkg',
+        type: 'module',
+        exports: { '.': './index.mjs' },
+        dependencies: { 'trans-overlap': '^1.0.0' },
+        optionalDependencies: { 'trans-overlap': '^1.0.0' },
+      })
+      writeFileSync(
+        join(source, 'node_modules', 'direct-pkg', 'index.mjs'),
+        'export const value = "direct-ok";\n',
+      )
+
+      writeFileSync(
+        join(source, 'lib', 'bin.js'),
+        'import { value } from "direct-pkg"; console.log(value);',
+      )
+
+      const result = spawnSync(
+        process.execPath,
+        buildBaseArgs(source, destination, sourceNodeModules),
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+      )
+
+      expect(result.status).toBe(0)
+      expect(result.stdout).not.toContain('restored closure packages: trans-overlap')
+      expect(result.stdout).toContain('staged CLI smoke output: direct-ok')
+    } finally {
+      rmSync(source, { recursive: true, force: true })
+      rmSync(sourceNodeModules, { recursive: true, force: true })
+      rmSync(destination, { recursive: true, force: true })
+    }
+  })
+
+  it('restores required peer dependencies and fails when a required peer is missing', () => {
+    const source = makeTemp('dsh-runtime-peer-source')
+    const sourceNodeModules = makeTemp('dsh-runtime-peer-source-node-modules')
+    const virtualStore = makeTemp('dsh-runtime-peer-virtual-store')
+    const destination = makeTemp('dsh-runtime-peer-dest')
+
+    try {
+      mkdirSync(join(source, 'lib'), { recursive: true })
+      mkdirSync(join(source, 'config'), { recursive: true })
+      mkdirSync(join(source, 'node_modules'), { recursive: true })
+      writeJson(join(source, 'package.json'), {
+        name: '@deepseek-ai/dsh',
+        version: '5.0.0-test',
+        dependencies: { 'direct-pkg': '^1.0.0' },
+      })
+
+      // Model pnpm's virtual-store layout for the peer-positive case.
+      const directPkgReal = join(virtualStore, 'direct-pkg@1.0.0', 'node_modules', 'direct-pkg')
+      mkdirSync(directPkgReal, { recursive: true })
+      writeJson(join(directPkgReal, 'package.json'), {
+        name: 'direct-pkg',
+        type: 'module',
+        exports: { '.': './index.mjs' },
+        peerDependencies: { 'peer-pkg': '^1.0.0' },
+      })
+      writeFileSync(
+        join(directPkgReal, 'index.mjs'),
+        'export * from "peer-pkg";\n',
+      )
+      symlinkSync(directPkgReal, join(source, 'node_modules', 'direct-pkg'), 'junction')
+
+      const peerPkgReal = join(virtualStore, 'direct-pkg@1.0.0', 'node_modules', 'peer-pkg')
+      mkdirSync(peerPkgReal, { recursive: true })
+      writeJson(join(peerPkgReal, 'package.json'), {
+        name: 'peer-pkg',
+        type: 'module',
+        exports: { '.': './index.mjs' },
+      })
+      writeFileSync(
+        join(peerPkgReal, 'index.mjs'),
+        'export const value = "peer-ok";\n',
+      )
+
+      writeFileSync(
+        join(source, 'lib', 'bin.js'),
+        'import { value } from "direct-pkg"; console.log(value);',
+      )
+
+      const result = spawnSync(
+        process.execPath,
+        buildBaseArgs(source, destination, sourceNodeModules),
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+      )
+
+      expect(result.status).toBe(0)
+      expect(result.stdout).toContain('restored closure packages: peer-pkg')
+      expect(result.stdout).toContain('staged CLI smoke output: peer-ok')
+      expect(lstatSync(join(destination, 'node_modules', 'peer-pkg', 'index.mjs')).isFile()).toBe(true)
+    } finally {
+      rmSync(source, { recursive: true, force: true })
+      rmSync(sourceNodeModules, { recursive: true, force: true })
+      rmSync(virtualStore, { recursive: true, force: true })
+      rmSync(destination, { recursive: true, force: true })
+    }
+  })
+
+  it('fails when a regular dependency is missing', () => {
+    const source = makeTemp('dsh-runtime-missing-dep-source')
+    const sourceNodeModules = makeTemp('dsh-runtime-missing-dep-source-node-modules')
+    const destination = makeTemp('dsh-runtime-missing-dep-dest')
+
+    try {
+      mkdirSync(join(source, 'lib'), { recursive: true })
+      mkdirSync(join(source, 'config'), { recursive: true })
+      mkdirSync(join(source, 'node_modules'), { recursive: true })
+      writeJson(join(source, 'package.json'), {
+        name: '@deepseek-ai/dsh',
+        version: '6.0.0-test',
+        dependencies: { 'missing-dep': '^1.0.0' },
+      })
+
+      const result = spawnSync(
+        process.execPath,
+        buildBaseArgs(source, destination, sourceNodeModules),
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+      )
+
+      expect(result.status).not.toBe(0)
+      expect(result.stderr).toContain('missing-dep not found')
+    } finally {
+      rmSync(source, { recursive: true, force: true })
+      rmSync(sourceNodeModules, { recursive: true, force: true })
+      rmSync(destination, { recursive: true, force: true })
+    }
+  })
+
+  it('fails when a required peer dependency is missing', () => {
+    const source = makeTemp('dsh-runtime-missing-peer-source')
+    const sourceNodeModules = makeTemp('dsh-runtime-missing-peer-source-node-modules')
+    const destination = makeTemp('dsh-runtime-missing-peer-dest')
+
+    try {
+      mkdirSync(join(source, 'lib'), { recursive: true })
+      mkdirSync(join(source, 'config'), { recursive: true })
+      mkdirSync(join(source, 'node_modules'), { recursive: true })
+      writeJson(join(source, 'package.json'), {
+        name: '@deepseek-ai/dsh',
+        version: '7.0.0-test',
+        dependencies: { 'direct-pkg': '^1.0.0' },
+      })
+
+      mkdirSync(join(source, 'node_modules', 'direct-pkg'), { recursive: true })
+      writeJson(join(source, 'node_modules', 'direct-pkg', 'package.json'), {
+        name: 'direct-pkg',
+        type: 'module',
+        exports: { '.': './index.mjs' },
+        peerDependencies: { 'missing-peer': '^1.0.0' },
+      })
+
+      const result = spawnSync(
+        process.execPath,
+        buildBaseArgs(source, destination, sourceNodeModules),
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+      )
+
+      expect(result.status).not.toBe(0)
+      expect(result.stderr).toContain('missing-peer not found')
+    } finally {
+      rmSync(source, { recursive: true, force: true })
+      rmSync(sourceNodeModules, { recursive: true, force: true })
+      rmSync(destination, { recursive: true, force: true })
+    }
+  })
+
+  it('resolves packages that do not export ./package.json in their exports field', () => {
+    const source = makeTemp('dsh-runtime-exports-source')
+    const sourceNodeModules = makeTemp('dsh-runtime-exports-source-node-modules')
+    const destination = makeTemp('dsh-runtime-exports-dest')
+
+    try {
+      mkdirSync(join(source, 'lib'), { recursive: true })
+      mkdirSync(join(source, 'config'), { recursive: true })
+      mkdirSync(join(source, 'node_modules'), { recursive: true })
+      writeJson(join(source, 'package.json'), {
+        name: '@deepseek-ai/dsh',
+        version: '8.0.0-test',
+        dependencies: { 'exports-pkg': '^1.0.0' },
+      })
+
+      // exports-pkg restricts exports to the main entry only; ./package.json
+      // is not exported, so require.resolve('exports-pkg/package.json') would
+      // fail. The materializer must still find the package directory.
+      mkdirSync(join(sourceNodeModules, 'exports-pkg'), { recursive: true })
+      writeJson(join(sourceNodeModules, 'exports-pkg', 'package.json'), {
+        name: 'exports-pkg',
+        type: 'module',
+        exports: { '.': { import: './index.mjs' } },
+      })
+      writeFileSync(
+        join(sourceNodeModules, 'exports-pkg', 'index.mjs'),
+        'export const value = "exports-ok";\n',
+      )
+
+      writeFileSync(
+        join(source, 'lib', 'bin.js'),
+        'import { value } from "exports-pkg"; console.log(value);',
+      )
+
+      const result = spawnSync(
+        process.execPath,
+        buildBaseArgs(source, destination, sourceNodeModules),
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+      )
+
+      expect(result.status).toBe(0)
+      expect(result.stdout).toContain('restored closure packages: exports-pkg')
+      expect(result.stdout).toContain('staged CLI smoke output: exports-ok')
+      expect(lstatSync(join(destination, 'node_modules', 'exports-pkg', 'index.mjs')).isFile()).toBe(true)
+    } finally {
+      rmSync(source, { recursive: true, force: true })
+      rmSync(sourceNodeModules, { recursive: true, force: true })
+      rmSync(destination, { recursive: true, force: true })
+    }
+  })
+
+  it('fails when the same package name resolves to different realpaths', () => {
+    const source = makeTemp('dsh-runtime-conflict-source')
+    const sourceNodeModules = makeTemp('dsh-runtime-conflict-source-node-modules')
+    const destination = makeTemp('dsh-runtime-conflict-dest')
+
+    try {
+      mkdirSync(join(source, 'lib'), { recursive: true })
+      mkdirSync(join(source, 'config'), { recursive: true })
+      mkdirSync(join(source, 'node_modules'), { recursive: true })
+      writeJson(join(source, 'package.json'), {
+        name: '@deepseek-ai/dsh',
+        version: '9.0.0-test',
+        dependencies: { 'dep-a': '^1.0.0', 'dep-b': '^1.0.0' },
+      })
+
+      mkdirSync(join(source, 'node_modules', 'dep-a'), { recursive: true })
+      writeJson(join(source, 'node_modules', 'dep-a', 'package.json'), {
+        name: 'dep-a',
+        type: 'module',
+        dependencies: { 'shared-pkg': '^1.0.0' },
+      })
+      mkdirSync(join(source, 'node_modules', 'dep-a', 'node_modules', 'shared-pkg'), { recursive: true })
+      writeJson(join(source, 'node_modules', 'dep-a', 'node_modules', 'shared-pkg', 'package.json'), {
+        name: 'shared-pkg',
+        version: '1.0.0',
+      })
+
+      mkdirSync(join(source, 'node_modules', 'dep-b'), { recursive: true })
+      writeJson(join(source, 'node_modules', 'dep-b', 'package.json'), {
+        name: 'dep-b',
+        type: 'module',
+        dependencies: { 'shared-pkg': '^2.0.0' },
+      })
+      mkdirSync(join(source, 'node_modules', 'dep-b', 'node_modules', 'shared-pkg'), { recursive: true })
+      writeJson(join(source, 'node_modules', 'dep-b', 'node_modules', 'shared-pkg', 'package.json'), {
+        name: 'shared-pkg',
+        version: '2.0.0',
+      })
+
+      const result = spawnSync(
+        process.execPath,
+        buildBaseArgs(source, destination, sourceNodeModules),
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+      )
+
+      expect(result.status).not.toBe(0)
+      expect(result.stderr).toContain('shared-pkg')
+      expect(result.stderr).toContain('conflicting realpaths')
+    } finally {
+      rmSync(source, { recursive: true, force: true })
+      rmSync(sourceNodeModules, { recursive: true, force: true })
       rmSync(destination, { recursive: true, force: true })
     }
   })
 
   it('copies sibling aliases of one directory without dropping entries', () => {
     const source = makeTemp('dsh-runtime-alias-source')
+    const sourceNodeModules = makeTemp('dsh-runtime-alias-source-node-modules')
     const external = makeTemp('dsh-runtime-alias-external')
     const destination = makeTemp('dsh-runtime-alias-dest')
 
@@ -88,7 +563,7 @@ describe('materialize-desktop-runtime.mjs', () => {
 
       const result = spawnSync(
         process.execPath,
-        [SCRIPT, '--from', source, '--to', destination],
+        buildBaseArgs(source, destination, sourceNodeModules),
         { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
       )
 
@@ -99,6 +574,7 @@ describe('materialize-desktop-runtime.mjs', () => {
       }
     } finally {
       rmSync(source, { recursive: true, force: true })
+      rmSync(sourceNodeModules, { recursive: true, force: true })
       rmSync(external, { recursive: true, force: true })
       rmSync(destination, { recursive: true, force: true })
     }
@@ -106,6 +582,7 @@ describe('materialize-desktop-runtime.mjs', () => {
 
   it('fails when the source is missing required entries', () => {
     const source = makeTemp('dsh-runtime-bad-source')
+    const sourceNodeModules = makeTemp('dsh-runtime-bad-source-node-modules')
     const destination = makeTemp('dsh-runtime-bad-dest')
 
     try {
@@ -113,7 +590,7 @@ describe('materialize-desktop-runtime.mjs', () => {
       // package.json, config, and node_modules are intentionally absent.
       const result = spawnSync(
         process.execPath,
-        [SCRIPT, '--from', source, '--to', destination],
+        buildBaseArgs(source, destination, sourceNodeModules),
         { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
       )
 
@@ -121,6 +598,7 @@ describe('materialize-desktop-runtime.mjs', () => {
       expect(result.stderr).toContain('required entry missing')
     } finally {
       rmSync(source, { recursive: true, force: true })
+      rmSync(sourceNodeModules, { recursive: true, force: true })
       rmSync(destination, { recursive: true, force: true })
     }
   })

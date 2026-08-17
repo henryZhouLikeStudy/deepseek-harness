@@ -14,13 +14,15 @@ Status: implemented
 
 从 `pnpm-workspace.yaml` 中移除 `injectWorkspacePackages`，保留 `linkWorkspacePackages: true`；重新生成 `pnpm-lock.yaml`，使工作区依赖在正常开发时以链接方式解析。
 
-使用现有的 `--prod --legacy --ignore-scripts` 标志把 CLI 部署到暂存目录 `apps/desktop/dsh-runtime-staging`，并在该步骤设置 `pnpm_config_inject_workspace_packages=true`，使工作区包仅在打包暂存树中被内联，而不会强制整个仓库回到陈旧副本布局。然后运行 `scripts/materialize-desktop-runtime.mjs`：
+使用现有的 `--prod --legacy --ignore-scripts` 标志，并加上 `--config.node-linker=hoisted` 和 `--config.link-workspace-packages=true`，把 CLI 部署到暂存目录 `apps/desktop/dsh-runtime-staging`，并在该步骤设置 `pnpm_config_inject_workspace_packages=true`，使工作区包仅在打包暂存树中被内联，而不会强制整个仓库回到陈旧副本布局。然后运行 `scripts/materialize-desktop-runtime.mjs --from apps/desktop/dsh-runtime-staging --to apps/desktop/dsh-runtime --source-node-modules apps/cli/node_modules --fallback-node-modules node_modules --smoke-command "web --help"`：
 
-1. 验证暂存树包含 `package.json`、`lib`、`config` 和 `node_modules`。
-2. 删除已有的 `apps/desktop/dsh-runtime`。
-3. 递归复制暂存树到 `apps/desktop/dsh-runtime`，同时反引用每个符号链接和联接；一个记录当前正在复制的源真实路径的 `Set` 会打断 pnpm 在 `.pnpm` 内部创建的循环 peer-dependency 链接。
-4. 遍历物化后的树，断言不再存在任何符号链接或联接。
-5. 运行 `node <dest>/lib/bin.js --version` 并打印版本号，证明运行时可以在隔离环境中执行。
+1. 从暂存清单构建完整的生产依赖与必需 peer 依赖闭包，并相对于每个父包解析依赖，从而正确处理 pnpm 虚拟存储布局。
+2. 将缺失的闭包包复制到暂存根，跳过包本地的嵌套 `node_modules`，使依赖保持提升。
+3. 验证暂存树包含 `package.json`、`lib`、`config` 和 `node_modules`。
+4. 删除已有的 `apps/desktop/dsh-runtime`。
+5. 递归复制暂存树到 `apps/desktop/dsh-runtime`，同时反引用每个符号链接和联接；一个记录当前正在复制的源真实路径的 `Set` 会打断 pnpm 在 `.pnpm` 内部创建的循环 peer-dependency 链接。
+6. 遍历物化后的树，断言不再存在任何符号链接或联接。
+7. 运行 `node <dest>/lib/bin.js web --help` 并打印输出，证明运行时可以在隔离环境中执行，并且能够加载 web profile。
 
 `electron-builder.yml` 把物化后的整个 `dsh-runtime` 目录作为一个 `extraResources` 条目打包，而不是只选子目录，这样 `package.json` 会被包含，且 `lib/bin.js` 期望的相对路径保持有效。
 
