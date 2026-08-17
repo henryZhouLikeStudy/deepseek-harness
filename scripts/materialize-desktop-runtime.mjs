@@ -418,7 +418,7 @@ async function findSourceResolutionContext(packageName, version, sourceDirs) {
  * @param {string} staging
  * @param {string} sourceNodeModules
  * @param {string | undefined} fallbackNodeModules
- * @returns {Promise<Map<string, { dir: string; realDir: string; copy: boolean }>>}
+ * @returns {Promise<Map<string, { dir: string; realDir: string; copy: boolean; equivalentRealDirs: Set<string> }>>}
  */
 async function buildClosure(staging, sourceNodeModules, fallbackNodeModules) {
   const manifest = JSON.parse(await readFile(join(staging, 'package.json'), 'utf8'))
@@ -426,7 +426,7 @@ async function buildClosure(staging, sourceNodeModules, fallbackNodeModules) {
   const sourceDirs = resolveSourceDirs(sourceNodeModules, fallbackNodeModules)
   const workspaceRootDir = workspaceRoot(sourceNodeModules, fallbackNodeModules)
 
-  /** @type {Map<string, { dir: string; realDir: string; copy: boolean }>} */
+  /** @type {Map<string, { dir: string; realDir: string; copy: boolean; equivalentRealDirs: Set<string> }>} */
   const closure = new Map()
   /** @type {Array<{ name: string; parentDir: string; kind: 'regular' | 'optional' | 'peer' }>} */
   const queue = []
@@ -458,7 +458,11 @@ async function buildClosure(staging, sourceNodeModules, fallbackNodeModules) {
 
     const existing = closure.get(name)
     if (existing !== undefined) {
-      if (existing.realDir !== resolved.realDir) {
+      // Only realpaths explicitly validated by findSourceResolutionContext at
+      // insertion time (same package in the configured sourceDirs) are accepted
+      // as aliases. Any other different realpath is a conflict, even if its
+      // manifest happens to share the same name and version.
+      if (!existing.equivalentRealDirs.has(resolved.realDir)) {
         throw new Error(
           `dependency ${name} resolves to conflicting realpaths: ${existing.realDir} and ${resolved.realDir}`,
         )
@@ -466,17 +470,22 @@ async function buildClosure(staging, sourceNodeModules, fallbackNodeModules) {
       continue
     }
 
-    closure.set(name, resolved)
-
     const packageManifest = JSON.parse(await readFile(join(resolved.dir, 'package.json'), 'utf8'))
     // Prefer the source package's real directory as the resolution context for
     // children, because a hoisted staging copy may be a shallow real directory
     // that has lost the original pnpm/workspace link context.
-    const resolutionParentDir = await findSourceResolutionContext(
+    const sourceContextDir = await findSourceResolutionContext(
       packageManifest.name,
       packageManifest.version,
       sourceDirs,
-    ) ?? resolved.realDir
+    )
+    const equivalentRealDirs = new Set([resolved.realDir])
+    if (sourceContextDir !== undefined && sourceContextDir !== resolved.realDir) {
+      equivalentRealDirs.add(sourceContextDir)
+    }
+    closure.set(name, { ...resolved, equivalentRealDirs })
+
+    const resolutionParentDir = sourceContextDir ?? resolved.realDir
     const optionalDeps = new Set(Object.keys(packageManifest.optionalDependencies ?? {}))
     // npm semantics: a name present in both dependencies and optionalDependencies
     // is treated as optional, so exclude it from the regular queue.

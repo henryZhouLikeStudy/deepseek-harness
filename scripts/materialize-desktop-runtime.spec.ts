@@ -682,6 +682,163 @@ describe('materialize-desktop-runtime.mjs', () => {
     }
   })
 
+  it('fails when two unrelated realpaths share the same name and version', () => {
+    const source = makeTemp('dsh-runtime-unrelated-alias-source')
+    const sourceNodeModules = makeTemp('dsh-runtime-unrelated-alias-source-node-modules')
+    const destination = makeTemp('dsh-runtime-unrelated-alias-dest')
+
+    try {
+      mkdirSync(join(source, 'lib'), { recursive: true })
+      mkdirSync(join(source, 'config'), { recursive: true })
+      mkdirSync(join(source, 'node_modules'), { recursive: true })
+      writeJson(join(source, 'package.json'), {
+        name: '@deepseek-ai/dsh',
+        version: '9.3.0-test',
+        dependencies: { 'dep-a': '^1.0.0', 'dep-b': '^1.0.0' },
+      })
+
+      mkdirSync(join(source, 'node_modules', 'dep-a'), { recursive: true })
+      writeJson(join(source, 'node_modules', 'dep-a', 'package.json'), {
+        name: 'dep-a',
+        type: 'module',
+        dependencies: { 'shared-pkg': '^1.0.0' },
+      })
+      mkdirSync(join(source, 'node_modules', 'dep-a', 'node_modules', 'shared-pkg'), { recursive: true })
+      writeJson(join(source, 'node_modules', 'dep-a', 'node_modules', 'shared-pkg', 'package.json'), {
+        name: 'shared-pkg',
+        version: '1.0.0',
+        type: 'module',
+      })
+
+      mkdirSync(join(source, 'node_modules', 'dep-b'), { recursive: true })
+      writeJson(join(source, 'node_modules', 'dep-b', 'package.json'), {
+        name: 'dep-b',
+        type: 'module',
+        dependencies: { 'shared-pkg': '^1.0.0' },
+      })
+      mkdirSync(join(source, 'node_modules', 'dep-b', 'node_modules', 'shared-pkg'), { recursive: true })
+      writeJson(join(source, 'node_modules', 'dep-b', 'node_modules', 'shared-pkg', 'package.json'), {
+        name: 'shared-pkg',
+        version: '1.0.0',
+        type: 'module',
+      })
+
+      const result = spawnSync(
+        process.execPath,
+        buildBaseArgs(source, destination, sourceNodeModules),
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+      )
+
+      expect(result.status).not.toBe(0)
+      expect(result.stderr).toContain('shared-pkg')
+      expect(result.stderr).toContain('conflicting realpaths')
+    } finally {
+      rmSync(source, { recursive: true, force: true })
+      rmSync(sourceNodeModules, { recursive: true, force: true })
+      rmSync(destination, { recursive: true, force: true })
+    }
+  })
+
+  it('treats validated staging and source realpaths of the same package as equivalent aliases', () => {
+    const source = makeTemp('dsh-runtime-equivalent-alias-source')
+    const workspaceRoot = makeTemp('dsh-runtime-equivalent-alias-workspace-root')
+    const sourceNodeModules = join(workspaceRoot, 'source-node-modules')
+    const destination = makeTemp('dsh-runtime-equivalent-alias-dest')
+
+    try {
+      mkdirSync(sourceNodeModules, { recursive: true })
+      mkdirSync(join(source, 'lib'), { recursive: true })
+      mkdirSync(join(source, 'config'), { recursive: true })
+      mkdirSync(join(source, 'node_modules'), { recursive: true })
+      writeJson(join(source, 'package.json'), {
+        name: '@deepseek-ai/dsh',
+        version: '9.2.0-test',
+        dependencies: { 'direct-pkg': '^1.0.0', 'shared-pkg': '^1.0.0' },
+      })
+
+      // Workspace packages live outside the source node_modules root and are
+      // exposed through junctions. shared-pkg v1 is present both as a hoisted
+      // real copy in staging and as a source junction to the same workspace
+      // directory; direct-pkg transitively reaches shared-pkg through its own
+      // source context.
+      const workspaceSharedPkg = join(workspaceRoot, 'workspace-shared-pkg')
+      mkdirSync(workspaceSharedPkg, { recursive: true })
+      writeJson(join(workspaceSharedPkg, 'package.json'), {
+        name: 'shared-pkg',
+        version: '1.0.0',
+        type: 'module',
+        exports: { '.': './index.mjs' },
+        dependencies: { 'nested-pkg': '^1.0.0' },
+      })
+      writeFileSync(join(workspaceSharedPkg, 'index.mjs'), 'export const value = "shared-ok";\n')
+      mkdirSync(join(workspaceSharedPkg, 'node_modules', 'nested-pkg'), { recursive: true })
+      writeJson(join(workspaceSharedPkg, 'node_modules', 'nested-pkg', 'package.json'), {
+        name: 'nested-pkg',
+        version: '1.0.0',
+        type: 'module',
+        exports: { '.': './index.mjs' },
+      })
+      writeFileSync(join(workspaceSharedPkg, 'node_modules', 'nested-pkg', 'index.mjs'), 'export const value = "nested-ok";\n')
+      symlinkSync(workspaceSharedPkg, join(sourceNodeModules, 'shared-pkg'), 'junction')
+
+      // Staging root has a hoisted real copy of shared-pkg v1 (no node_modules).
+      mkdirSync(join(source, 'node_modules', 'shared-pkg'), { recursive: true })
+      writeJson(join(source, 'node_modules', 'shared-pkg', 'package.json'), {
+        name: 'shared-pkg',
+        version: '1.0.0',
+        type: 'module',
+        exports: { '.': './index.mjs' },
+        dependencies: { 'nested-pkg': '^1.0.0' },
+      })
+      writeFileSync(join(source, 'node_modules', 'shared-pkg', 'index.mjs'), 'export const value = "shared-ok";\n')
+
+      const workspaceDirectPkg = join(workspaceRoot, 'workspace-direct-pkg')
+      mkdirSync(workspaceDirectPkg, { recursive: true })
+      writeJson(join(workspaceDirectPkg, 'package.json'), {
+        name: 'direct-pkg',
+        version: '1.0.0',
+        type: 'module',
+        exports: { '.': './index.mjs' },
+        dependencies: { 'shared-pkg': '^1.0.0' },
+      })
+      writeFileSync(join(workspaceDirectPkg, 'index.mjs'), 'export * from "shared-pkg";\n')
+      mkdirSync(join(workspaceDirectPkg, 'node_modules'), { recursive: true })
+      symlinkSync(workspaceSharedPkg, join(workspaceDirectPkg, 'node_modules', 'shared-pkg'), 'junction')
+      symlinkSync(workspaceDirectPkg, join(sourceNodeModules, 'direct-pkg'), 'junction')
+
+      // The staging copy of direct-pkg is a real directory (hoisted deploy).
+      mkdirSync(join(source, 'node_modules', 'direct-pkg'), { recursive: true })
+      writeJson(join(source, 'node_modules', 'direct-pkg', 'package.json'), {
+        name: 'direct-pkg',
+        version: '1.0.0',
+        type: 'module',
+        exports: { '.': './index.mjs' },
+        dependencies: { 'shared-pkg': '^1.0.0' },
+      })
+      writeFileSync(join(source, 'node_modules', 'direct-pkg', 'index.mjs'), 'export * from "shared-pkg";\n')
+
+      writeFileSync(
+        join(source, 'lib', 'bin.js'),
+        'import { value as direct } from "direct-pkg"; import { value as shared } from "shared-pkg"; console.log(`${direct}:${shared}`);',
+      )
+
+      const result = spawnSync(
+        process.execPath,
+        buildBaseArgs(source, destination, sourceNodeModules),
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+      )
+
+      expect(result.status).toBe(0)
+      expect(result.stdout).toContain('restored closure packages: nested-pkg')
+      expect(result.stdout).toContain('staged CLI smoke output: shared-ok:shared-ok')
+      expect(lstatSync(join(destination, 'node_modules', 'nested-pkg', 'index.mjs')).isFile()).toBe(true)
+    } finally {
+      rmSync(source, { recursive: true, force: true })
+      rmSync(workspaceRoot, { recursive: true, force: true })
+      rmSync(destination, { recursive: true, force: true })
+    }
+  })
+
   it('copies sibling aliases of one directory without dropping entries', () => {
     const source = makeTemp('dsh-runtime-alias-source')
     const sourceNodeModules = makeTemp('dsh-runtime-alias-source-node-modules')
