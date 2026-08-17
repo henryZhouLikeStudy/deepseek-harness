@@ -146,6 +146,88 @@ describe('materialize-desktop-runtime.mjs', () => {
     }
   })
 
+  it('uses the source package context to resolve children of a hoisted staged package', () => {
+    const source = makeTemp('dsh-runtime-source-context-source')
+    const sourceNodeModules = makeTemp('dsh-runtime-source-context-source-node-modules')
+    const destination = makeTemp('dsh-runtime-source-context-dest')
+
+    try {
+      mkdirSync(join(source, 'lib'), { recursive: true })
+      mkdirSync(join(source, 'config'), { recursive: true })
+      mkdirSync(join(source, 'node_modules'), { recursive: true })
+      writeJson(join(source, 'package.json'), {
+        name: '@deepseek-ai/dsh',
+        version: '3.1.0-test',
+        dependencies: { 'source-context-pkg': '^1.0.0' },
+      })
+
+      // Model a workspace override: in the source tree the package is a junction
+      // to a workspace directory that holds additional dependencies. In the
+      // hoisted staging tree it is a real copied directory with no nested
+      // node_modules, so child dependencies must be discovered through the
+      // source context.
+      const workspacePkg = join(sourceNodeModules, '..', 'workspace-context-pkg')
+      mkdirSync(workspacePkg, { recursive: true })
+      writeJson(join(workspacePkg, 'package.json'), {
+        name: 'source-context-pkg',
+        version: '1.0.0',
+        type: 'module',
+        exports: { '.': './index.mjs' },
+        dependencies: { 'nested-pkg': '^1.0.0' },
+      })
+      writeFileSync(
+        join(workspacePkg, 'index.mjs'),
+        'export * from "nested-pkg";\n',
+      )
+      mkdirSync(join(workspacePkg, 'node_modules', 'nested-pkg'), { recursive: true })
+      writeJson(join(workspacePkg, 'node_modules', 'nested-pkg', 'package.json'), {
+        name: 'nested-pkg',
+        version: '1.0.0',
+        type: 'module',
+        exports: { '.': './index.mjs' },
+      })
+      writeFileSync(
+        join(workspacePkg, 'node_modules', 'nested-pkg', 'index.mjs'),
+        'export const value = "nested-ok";\n',
+      )
+      symlinkSync(workspacePkg, join(sourceNodeModules, 'source-context-pkg'), 'junction')
+
+      // The staging copy is a real directory without nested dependencies.
+      mkdirSync(join(source, 'node_modules', 'source-context-pkg'), { recursive: true })
+      writeJson(join(source, 'node_modules', 'source-context-pkg', 'package.json'), {
+        name: 'source-context-pkg',
+        version: '1.0.0',
+        type: 'module',
+        exports: { '.': './index.mjs' },
+        dependencies: { 'nested-pkg': '^1.0.0' },
+      })
+      writeFileSync(
+        join(source, 'node_modules', 'source-context-pkg', 'index.mjs'),
+        'export * from "nested-pkg";\n',
+      )
+
+      writeFileSync(
+        join(source, 'lib', 'bin.js'),
+        'import { value } from "source-context-pkg"; console.log(value);',
+      )
+
+      const result = spawnSync(
+        process.execPath,
+        buildBaseArgs(source, destination, sourceNodeModules),
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+      )
+
+      expect(result.status).toBe(0)
+      expect(result.stdout).toContain('restored closure packages: nested-pkg')
+      expect(result.stdout).toContain('staged CLI smoke output: nested-ok')
+      expect(lstatSync(join(destination, 'node_modules', 'nested-pkg', 'index.mjs')).isFile()).toBe(true)
+    } finally {
+      rmSync(source, { recursive: true, force: true })
+      rmSync(sourceNodeModules, { recursive: true, force: true })
+      rmSync(destination, { recursive: true, force: true })
+    }
+  })
+
   it('skips missing optional dependencies and includes installed optional dependencies', () => {
     const source = makeTemp('dsh-runtime-optional-source')
     const sourceNodeModules = makeTemp('dsh-runtime-optional-source-node-modules')
@@ -534,6 +616,68 @@ describe('materialize-desktop-runtime.mjs', () => {
     } finally {
       rmSync(source, { recursive: true, force: true })
       rmSync(sourceNodeModules, { recursive: true, force: true })
+      rmSync(destination, { recursive: true, force: true })
+    }
+  })
+
+  it('fails when staging root and virtual-store parent resolve the same name to different realpaths', () => {
+    const source = makeTemp('dsh-runtime-virtual-store-conflict-source')
+    const sourceNodeModules = makeTemp('dsh-runtime-virtual-store-conflict-source-node-modules')
+    const virtualStore = makeTemp('dsh-runtime-virtual-store-conflict-virtual-store')
+    const destination = makeTemp('dsh-runtime-virtual-store-conflict-dest')
+
+    try {
+      mkdirSync(join(source, 'lib'), { recursive: true })
+      mkdirSync(join(source, 'config'), { recursive: true })
+      mkdirSync(join(source, 'node_modules'), { recursive: true })
+      writeJson(join(source, 'package.json'), {
+        name: '@deepseek-ai/dsh',
+        version: '9.1.0-test',
+        dependencies: { 'direct-pkg': '^1.0.0', 'shared-pkg': '^1.0.0' },
+      })
+
+      // Staging root has shared-pkg v1 as a direct dependency.
+      mkdirSync(join(source, 'node_modules', 'shared-pkg'), { recursive: true })
+      writeJson(join(source, 'node_modules', 'shared-pkg', 'package.json'), {
+        name: 'shared-pkg',
+        version: '1.0.0',
+        type: 'module',
+      })
+
+      // direct-pkg lives in the virtual store and depends on shared-pkg v2 in
+      // its own context. Because it is a transitive dependency, the parent
+      // context must be consulted before the staging root.
+      const directPkgReal = join(virtualStore, 'direct-pkg@1.0.0', 'node_modules', 'direct-pkg')
+      mkdirSync(directPkgReal, { recursive: true })
+      writeJson(join(directPkgReal, 'package.json'), {
+        name: 'direct-pkg',
+        version: '1.0.0',
+        type: 'module',
+        dependencies: { 'shared-pkg': '^2.0.0' },
+      })
+      symlinkSync(directPkgReal, join(source, 'node_modules', 'direct-pkg'), 'junction')
+
+      const sharedPkgV2Real = join(virtualStore, 'direct-pkg@1.0.0', 'node_modules', 'shared-pkg')
+      mkdirSync(sharedPkgV2Real, { recursive: true })
+      writeJson(join(sharedPkgV2Real, 'package.json'), {
+        name: 'shared-pkg',
+        version: '2.0.0',
+        type: 'module',
+      })
+
+      const result = spawnSync(
+        process.execPath,
+        buildBaseArgs(source, destination, sourceNodeModules),
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+      )
+
+      expect(result.status).not.toBe(0)
+      expect(result.stderr).toContain('shared-pkg')
+      expect(result.stderr).toContain('conflicting realpaths')
+    } finally {
+      rmSync(source, { recursive: true, force: true })
+      rmSync(sourceNodeModules, { recursive: true, force: true })
+      rmSync(virtualStore, { recursive: true, force: true })
       rmSync(destination, { recursive: true, force: true })
     }
   })

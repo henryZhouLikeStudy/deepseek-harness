@@ -315,19 +315,31 @@ function withinWorkspace(path, root) {
  * Resolve a dependency of `parentDir` using Node module lookup paths (the same
  * paths `require.resolve` would search), bounded to the workspace root and
  * explicit source/fallback node_modules roots. This does not require the
- * package to export `./package.json`. If the dependency is already present in
- * the staging root it is left untouched.
+ * package to export `./package.json`.
+ *
+ * For direct dependencies of the staged root manifest we prefer the staging
+ * root node_modules, because `pnpm deploy` has already laid out the root
+ * closure there. For transitive dependencies we resolve from the parent
+ * package's context first so that pnpm virtual-store layouts and workspace
+ * overrides are honored; the staging root is used only as a fallback. When a
+ * contextual resolution points to the same real directory as the staging root
+ * it is treated as the same package; if it points elsewhere, the caller's
+ * conflict detection will throw.
  * @param {string} packageName
  * @param {string} parentDir - directory containing the parent package.json.
  * @param {string} stagingNodeModules
  * @param {string[]} sourceDirs
  * @param {string} workspaceRootDir
+ * @param {boolean} isRootDependency - whether this is a direct dependency of the staged root.
  * @returns {Promise<{ dir: string; realDir: string; copy: boolean } | undefined>}
  */
-async function resolvePackageDir(packageName, parentDir, stagingNodeModules, sourceDirs, workspaceRootDir) {
+async function resolvePackageDir(packageName, parentDir, stagingNodeModules, sourceDirs, workspaceRootDir, isRootDependency) {
   const stagingPath = join(stagingNodeModules, packageName)
-  if (await pathExists(stagingPath)) {
-    return { dir: stagingPath, realDir: await safeRealpath(stagingPath), copy: false }
+  const stagingRealDir = await safeRealpath(stagingPath)
+  const stagingExists = await pathExists(stagingPath)
+
+  if (isRootDependency && stagingExists) {
+    return { dir: stagingPath, realDir: stagingRealDir, copy: false }
   }
 
   const require = createRequire(join(parentDir, 'package.json'))
@@ -337,19 +349,59 @@ async function resolvePackageDir(packageName, parentDir, stagingNodeModules, sou
     const candidate = join(lookupPath, packageName)
     if (await pathExists(candidate)) {
       const realDir = await safeRealpath(candidate)
-      if (withinWorkspace(realDir, workspaceRootDir)) {
-        return { dir: candidate, realDir, copy: true }
+      if (!withinWorkspace(realDir, workspaceRootDir)) continue
+      if (stagingExists && realDir === stagingRealDir) {
+        return { dir: stagingPath, realDir: stagingRealDir, copy: false }
       }
+      return { dir: candidate, realDir, copy: true }
     }
   }
 
   for (const dir of sourceDirs) {
     const candidate = join(dir, packageName)
     if (await pathExists(candidate)) {
-      return { dir: candidate, realDir: await safeRealpath(candidate), copy: true }
+      const realDir = await safeRealpath(candidate)
+      if (stagingExists && realDir === stagingRealDir) {
+        return { dir: stagingPath, realDir: stagingRealDir, copy: false }
+      }
+      return { dir: candidate, realDir, copy: true }
     }
   }
 
+  if (stagingExists) {
+    return { dir: stagingPath, realDir: stagingRealDir, copy: false }
+  }
+
+  return undefined
+}
+
+/**
+ * Find the real directory of a package in the explicit source node_modules
+ * roots that matches the staged package by name and version. pnpm's hoisted
+ * deploy copies workspace packages as real directories, which discards the
+ * original resolution context (e.g., a vendor override junction whose target
+ * contains additional dependencies). When the same package is available in a
+ * source root, use its real directory as the parent context for child
+ * dependency resolution instead of the staged copy.
+ * @param {string} packageName
+ * @param {string} version
+ * @param {string[]} sourceDirs
+ * @returns {Promise<string | undefined>}
+ */
+async function findSourceResolutionContext(packageName, version, sourceDirs) {
+  for (const dir of sourceDirs) {
+    const candidate = join(dir, packageName)
+    if (!(await pathExists(candidate))) continue
+    const realDir = await safeRealpath(candidate)
+    try {
+      const manifest = JSON.parse(await readFile(join(realDir, 'package.json'), 'utf8'))
+      if (manifest.name === packageName && manifest.version === version) {
+        return realDir
+      }
+    } catch {
+      // Ignore unreadable or malformed packages.
+    }
+  }
   return undefined
 }
 
@@ -397,7 +449,8 @@ async function buildClosure(staging, sourceNodeModules, fallbackNodeModules) {
   while (queue.length > 0) {
     const { name, parentDir, kind } = queue.shift()
 
-    const resolved = await resolvePackageDir(name, parentDir, stagingNodeModules, sourceDirs, workspaceRootDir)
+    const isRootDependency = parentDir === staging
+    const resolved = await resolvePackageDir(name, parentDir, stagingNodeModules, sourceDirs, workspaceRootDir, isRootDependency)
     if (resolved === undefined) {
       if (kind === 'optional') continue
       throw new Error(`dependency ${name} not found in staging or source node_modules`)
@@ -416,21 +469,29 @@ async function buildClosure(staging, sourceNodeModules, fallbackNodeModules) {
     closure.set(name, resolved)
 
     const packageManifest = JSON.parse(await readFile(join(resolved.dir, 'package.json'), 'utf8'))
+    // Prefer the source package's real directory as the resolution context for
+    // children, because a hoisted staging copy may be a shallow real directory
+    // that has lost the original pnpm/workspace link context.
+    const resolutionParentDir = await findSourceResolutionContext(
+      packageManifest.name,
+      packageManifest.version,
+      sourceDirs,
+    ) ?? resolved.realDir
     const optionalDeps = new Set(Object.keys(packageManifest.optionalDependencies ?? {}))
     // npm semantics: a name present in both dependencies and optionalDependencies
     // is treated as optional, so exclude it from the regular queue.
     for (const dep of Object.keys(packageManifest.dependencies ?? {})) {
       if (!optionalDeps.has(dep)) {
-        queue.push({ name: dep, parentDir: resolved.realDir, kind: 'regular' })
+        queue.push({ name: dep, parentDir: resolutionParentDir, kind: 'regular' })
       }
     }
     for (const dep of optionalDeps) {
-      queue.push({ name: dep, parentDir: resolved.realDir, kind: 'optional' })
+      queue.push({ name: dep, parentDir: resolutionParentDir, kind: 'optional' })
     }
     for (const dep of Object.keys(packageManifest.peerDependencies ?? {})) {
       const meta = packageManifest.peerDependenciesMeta?.[dep]
       if (meta?.optional !== true) {
-        queue.push({ name: dep, parentDir: resolved.realDir, kind: 'peer' })
+        queue.push({ name: dep, parentDir: resolutionParentDir, kind: 'peer' })
       }
     }
   }
