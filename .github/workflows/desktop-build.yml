@@ -42,14 +42,32 @@ jobs:
         run: pnpm run build:web
 
       - name: Deploy dsh runtime
-        run: pnpm --filter @deepseek-ai/dsh deploy --prod --legacy --ignore-scripts apps/desktop/dsh-runtime
+        env:
+          # Inline workspace packages into the deploy target so the runtime is
+          # self-contained. We keep the workspace-level setting disabled to
+          # avoid stale copies and lock churn across the repo.
+          pnpm_config_inject_workspace_packages: true
+        run: pnpm --filter @deepseek-ai/dsh deploy --prod --legacy --ignore-scripts apps/desktop/dsh-runtime-staging
+
+      - name: Materialize dsh runtime
+        run: node scripts/materialize-desktop-runtime.mjs --from apps/desktop/dsh-runtime-staging --to apps/desktop/dsh-runtime
 
       - name: Build desktop main process
         working-directory: apps/desktop
+        env:
+          # pnpm 11 runs `pnpm install --production` before scripts by default.
+          # The earlier `pnpm deploy` leaves the workspace state out of sync, so
+          # that auto-install would purge devDependencies and run root postinstall
+          # before lefthook is available. Skip the implicit install; dependencies
+          # were already installed by the explicit install step above.
+          pnpm_config_verify_deps_before_run: false
         run: pnpm run build
 
       - name: Build desktop installer
         working-directory: apps/desktop
+        env:
+          # Same guard for any pnpm subprocess that electron-builder may spawn.
+          pnpm_config_verify_deps_before_run: false
         run: npx electron-builder --win nsis
 
       - uses: actions/upload-artifact@v4
