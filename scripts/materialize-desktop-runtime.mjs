@@ -376,6 +376,109 @@ async function resolvePackageDir(packageName, parentDir, stagingNodeModules, sou
 }
 
 /**
+ * Walk up from a resolved module path until we find the package.json whose
+ * `name` matches the expected package. This handles pnpm's strict layout where
+ * the resolved main file lives deep inside `node_modules/.pnpm/<pkg>/...`.
+ * The walk is bounded to the workspace root so global packages are never used.
+ * @param {string} resolvedPath
+ * @param {string} expectedName
+ * @param {string} workspaceRootDir
+ * @returns {Promise<string>}
+ */
+async function findPackageDirFromPath(resolvedPath, expectedName, workspaceRootDir) {
+  let dir = dirname(resolvedPath)
+  while (withinWorkspace(dir, workspaceRootDir)) {
+    const manifestPath = join(dir, 'package.json')
+    if (await pathExists(manifestPath)) {
+      try {
+        const manifest = JSON.parse(await readFile(manifestPath, 'utf8'))
+        if (manifest.name === expectedName) return dir
+      } catch {
+        // Ignore unreadable or mismatched manifests and keep walking.
+      }
+    }
+    const parent = dirname(dir)
+    if (parent === dir) break
+    dir = parent
+  }
+  throw new Error(`package directory not found for ${resolvedPath}`)
+}
+
+/**
+ * Return a matching direct package entry from one configured source root.
+ * @param {string} packageName
+ * @param {string} version
+ * @param {string} sourceDir
+ * @param {string} workspaceRootDir
+ * @returns {Promise<string | undefined>}
+ */
+async function findDirectSourcePackageDir(packageName, version, sourceDir, workspaceRootDir) {
+  const candidate = join(sourceDir, packageName)
+  if (!(await pathExists(candidate))) return undefined
+
+  const realDir = await safeRealpath(candidate)
+  if (!withinWorkspace(realDir, workspaceRootDir)) return undefined
+
+  try {
+    const manifest = JSON.parse(await readFile(join(realDir, 'package.json'), 'utf8'))
+    if (manifest.name === packageName && manifest.version === version) return realDir
+  } catch {
+    // Ignore unreadable or malformed packages.
+  }
+  return undefined
+}
+
+/**
+ * Resolve a matching package from one configured source root. A direct entry
+ * takes precedence over Node's ancestor lookup, which may otherwise select an
+ * unrelated hoisted package. Node resolution remains necessary for pnpm's
+ * strict .pnpm layout when no direct entry is available.
+ *
+ * Resolution is bounded to the workspace root, and if Node resolution finds a
+ * version mismatch we still fall back to the direct `sourceDir/<pkg>` entry.
+ * @param {string} packageName
+ * @param {string} version
+ * @param {string} sourceDir
+ * @param {string} workspaceRootDir
+ * @returns {Promise<string | undefined>}
+ */
+async function resolveSourcePackageDir(packageName, version, sourceDir, workspaceRootDir) {
+  if (!withinWorkspace(sourceDir, workspaceRootDir)) return undefined
+
+  const direct = await findDirectSourcePackageDir(packageName, version, sourceDir, workspaceRootDir)
+  if (direct !== undefined) return direct
+
+  let nodeResolvedMain
+  try {
+    const require = createRequire(join(sourceDir, 'package.json'))
+    nodeResolvedMain = require.resolve(packageName)
+  } catch {
+    // Node resolution failed; fall through to direct lookup below.
+  }
+
+  if (nodeResolvedMain !== undefined) {
+    try {
+      if (!withinWorkspace(nodeResolvedMain, workspaceRootDir)) {
+        throw new Error(`resolved package is outside workspace: ${nodeResolvedMain}`)
+      }
+      const packageDir = await findPackageDirFromPath(nodeResolvedMain, packageName, workspaceRootDir)
+      const realDir = await safeRealpath(packageDir)
+      if (withinWorkspace(realDir, workspaceRootDir)) {
+        const manifest = JSON.parse(await readFile(join(realDir, 'package.json'), 'utf8'))
+        if (manifest.version === version) {
+          return realDir
+        }
+      }
+    } catch {
+      // Manifest missing, name mismatch, or outside workspace; fall through.
+    }
+  }
+
+  // Recheck the direct entry after a Node resolution mismatch or failure.
+  return findDirectSourcePackageDir(packageName, version, sourceDir, workspaceRootDir)
+}
+
+/**
  * Find the real directory of a package in the explicit source node_modules
  * roots that matches the staged package by name and version. pnpm's hoisted
  * deploy copies workspace packages as real directories, which discards the
@@ -383,26 +486,41 @@ async function resolvePackageDir(packageName, parentDir, stagingNodeModules, sou
  * contains additional dependencies). When the same package is available in a
  * source root, use its real directory as the parent context for child
  * dependency resolution instead of the staged copy.
+ *
+ * This uses Node module resolution from each source root so it works for both
+ * direct `node_modules/<pkg>` entries and pnpm's strict `.pnpm` layout.
  * @param {string} packageName
  * @param {string} version
  * @param {string[]} sourceDirs
+ * @param {string} workspaceRootDir
  * @returns {Promise<string | undefined>}
  */
-async function findSourceResolutionContext(packageName, version, sourceDirs) {
+async function findSourceResolutionContext(packageName, version, sourceDirs, workspaceRootDir) {
   for (const dir of sourceDirs) {
-    const candidate = join(dir, packageName)
-    if (!(await pathExists(candidate))) continue
-    const realDir = await safeRealpath(candidate)
-    try {
-      const manifest = JSON.parse(await readFile(join(realDir, 'package.json'), 'utf8'))
-      if (manifest.name === packageName && manifest.version === version) {
-        return realDir
-      }
-    } catch {
-      // Ignore unreadable or malformed packages.
-    }
+    const resolved = await resolveSourcePackageDir(packageName, version, dir, workspaceRootDir)
+    if (resolved !== undefined) return resolved
   }
   return undefined
+}
+
+/**
+ * Return the resolution context validated for one resolved package. Packages
+ * reached in source or fallback trees already carry their own context; only a
+ * staging copy may map to a different real directory in the source roots.
+ * @param {{ realDir: string; copy: boolean }} resolved
+ * @param {{ name: string; version: string }} packageManifest
+ * @param {string[]} sourceDirs
+ * @param {string} workspaceRootDir
+ * @returns {Promise<string | undefined>}
+ */
+async function sourceResolutionContext(resolved, packageManifest, sourceDirs, workspaceRootDir) {
+  if (resolved.copy) return resolved.realDir
+  return findSourceResolutionContext(
+    packageManifest.name,
+    packageManifest.version,
+    sourceDirs,
+    workspaceRootDir,
+  )
 }
 
 /**
@@ -418,7 +536,7 @@ async function findSourceResolutionContext(packageName, version, sourceDirs) {
  * @param {string} staging
  * @param {string} sourceNodeModules
  * @param {string | undefined} fallbackNodeModules
- * @returns {Promise<Map<string, { dir: string; realDir: string; copy: boolean; equivalentRealDirs: Set<string> }>>}
+ * @returns {Promise<Map<string, { dir: string; realDir: string; copy: boolean; sourceContextDir: string | undefined }>>}
  */
 async function buildClosure(staging, sourceNodeModules, fallbackNodeModules) {
   const manifest = JSON.parse(await readFile(join(staging, 'package.json'), 'utf8'))
@@ -426,7 +544,7 @@ async function buildClosure(staging, sourceNodeModules, fallbackNodeModules) {
   const sourceDirs = resolveSourceDirs(sourceNodeModules, fallbackNodeModules)
   const workspaceRootDir = workspaceRoot(sourceNodeModules, fallbackNodeModules)
 
-  /** @type {Map<string, { dir: string; realDir: string; copy: boolean; equivalentRealDirs: Set<string> }>} */
+  /** @type {Map<string, { dir: string; realDir: string; copy: boolean; sourceContextDir: string | undefined }>} */
   const closure = new Map()
   /** @type {Array<{ name: string; parentDir: string; kind: 'regular' | 'optional' | 'peer' }>} */
   const queue = []
@@ -458,35 +576,19 @@ async function buildClosure(staging, sourceNodeModules, fallbackNodeModules) {
 
     const existing = closure.get(name)
     if (existing !== undefined) {
-      if (!existing.equivalentRealDirs.has(resolved.realDir)) {
-        // Revalidate against the configured source roots: both packages are
-        // aliases only if they resolve to the same validated source realpath.
-        // A matching name+version alone is not enough; the shared origin must
-        // be discoverable through sourceDirs.
-        const existingManifest = JSON.parse(await readFile(join(existing.dir, 'package.json'), 'utf8'))
+      if (existing.realDir !== resolved.realDir) {
         const resolvedManifest = JSON.parse(await readFile(join(resolved.dir, 'package.json'), 'utf8'))
-        const existingSourceContext = await findSourceResolutionContext(
-          existingManifest.name,
-          existingManifest.version,
+        const resolvedSourceContext = await sourceResolutionContext(
+          resolved,
+          resolvedManifest,
           sourceDirs,
+          workspaceRootDir,
         )
-        const resolvedSourceContext = await findSourceResolutionContext(
-          resolvedManifest.name,
-          resolvedManifest.version,
-          sourceDirs,
-        )
-        if (
-          existingSourceContext !== undefined
-          && resolvedSourceContext !== undefined
-          && existingSourceContext === resolvedSourceContext
-        ) {
-          existing.equivalentRealDirs.add(existing.realDir)
-          existing.equivalentRealDirs.add(resolved.realDir)
-          continue
+        if (existing.sourceContextDir !== resolved.realDir && resolvedSourceContext !== existing.realDir) {
+          throw new Error(
+            `dependency ${name} resolves to conflicting realpaths: ${existing.realDir} and ${resolved.realDir}`,
+          )
         }
-        throw new Error(
-          `dependency ${name} resolves to conflicting realpaths: ${existing.realDir} and ${resolved.realDir}`,
-        )
       }
       continue
     }
@@ -495,16 +597,13 @@ async function buildClosure(staging, sourceNodeModules, fallbackNodeModules) {
     // Prefer the source package's real directory as the resolution context for
     // children, because a hoisted staging copy may be a shallow real directory
     // that has lost the original pnpm/workspace link context.
-    const sourceContextDir = await findSourceResolutionContext(
-      packageManifest.name,
-      packageManifest.version,
+    const sourceContextDir = await sourceResolutionContext(
+      resolved,
+      packageManifest,
       sourceDirs,
+      workspaceRootDir,
     )
-    const equivalentRealDirs = new Set([resolved.realDir])
-    if (sourceContextDir !== undefined && sourceContextDir !== resolved.realDir) {
-      equivalentRealDirs.add(sourceContextDir)
-    }
-    closure.set(name, { ...resolved, equivalentRealDirs })
+    closure.set(name, { ...resolved, sourceContextDir })
 
     const resolutionParentDir = sourceContextDir ?? resolved.realDir
     const optionalDeps = new Set(Object.keys(packageManifest.optionalDependencies ?? {}))
