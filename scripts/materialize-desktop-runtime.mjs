@@ -501,8 +501,19 @@ async function resolveSourcePackageDir(packageName, version, sourceDir, workspac
  */
 async function findSourceResolutionContext(packageName, version, sourceDirs, workspaceRootDir) {
   for (const dir of sourceDirs) {
-    const resolved = await resolveSourcePackageDir(packageName, version, dir, workspaceRootDir)
-    if (resolved !== undefined) return resolved
+    const candidate = join(dir, packageName)
+    if (!(await pathExists(candidate))) continue
+    const stat = await lstat(candidate)
+    if (!stat.isSymbolicLink()) continue
+    const realDir = await safeRealpath(candidate)
+    if (!withinWorkspace(realDir, workspaceRootDir)) continue
+    if (sourceDirs.some((sourceDir) => withinWorkspace(realDir, join(sourceDir, '.pnpm')))) continue
+    try {
+      const manifest = JSON.parse(await readFile(join(realDir, 'package.json'), 'utf8'))
+      if (manifest.name === packageName && manifest.version === version) return realDir
+    } catch {
+      // Ignore malformed workspace-link targets.
+    }
   }
   return undefined
 }
@@ -540,6 +551,30 @@ function isConfiguredPnpmStorePackage(realDir, sourceDirs, workspaceRootDir) {
   return sourceDirs.some((sourceDir) => {
     const storeDir = join(sourceDir, '.pnpm')
     return withinWorkspace(storeDir, workspaceRootDir) && withinWorkspace(realDir, storeDir)
+  })
+}
+
+/**
+ * Return whether a package is under a configured registry pnpm locator for its
+ * exact name and version. file/link locators deliberately do not match.
+ * @param {string} realDir
+ * @param {string} packageName
+ * @param {string} version
+ * @param {string[]} sourceDirs
+ * @param {string} workspaceRootDir
+ * @returns {boolean}
+ */
+function isConfiguredRegistryPnpmPackage(realDir, packageName, version, sourceDirs, workspaceRootDir) {
+  if (!withinWorkspace(realDir, workspaceRootDir)) return false
+  const encodedName = packageName.replace('/', '+')
+  const locatorPrefix = `${encodedName}@${version}`
+  return sourceDirs.some((sourceDir) => {
+    const storeDir = join(sourceDir, '.pnpm')
+    if (!withinWorkspace(storeDir, workspaceRootDir) || !withinWorkspace(realDir, storeDir)) return false
+    const locator = relative(storeDir, realDir).split(sep)[0]
+    if (!locator?.startsWith(locatorPrefix)) return false
+    const suffix = locator.slice(locatorPrefix.length)
+    return suffix === '' || suffix.startsWith('_') || suffix.startsWith('(')
   })
 }
 
@@ -706,7 +741,7 @@ async function haveEquivalentStagingAndPnpmPayloads(
  * @param {string} staging
  * @param {string} sourceNodeModules
  * @param {string | undefined} fallbackNodeModules
- * @returns {Promise<Map<string, { dir: string; realDir: string; copy: boolean; sourceContextDir: string | undefined }>>}
+ * @returns {Promise<Map<string, { dir: string; realDir: string; copy: boolean; sourceContextDir: string | undefined; version: string | undefined }>>}
  */
 async function buildClosure(staging, sourceNodeModules, fallbackNodeModules) {
   const manifest = JSON.parse(await readFile(join(staging, 'package.json'), 'utf8'))
@@ -714,12 +749,83 @@ async function buildClosure(staging, sourceNodeModules, fallbackNodeModules) {
   const sourceDirs = resolveSourceDirs(sourceNodeModules, fallbackNodeModules)
   const workspaceRootDir = workspaceRoot(sourceNodeModules, fallbackNodeModules)
 
-  /** @type {Map<string, { dir: string; realDir: string; copy: boolean; sourceContextDir: string | undefined }>} */
+  /** @type {Map<string, { dir: string; realDir: string; copy: boolean; sourceContextDir: string | undefined; version: string | undefined }>} */
   const closure = new Map()
   /** @type {Map<string, Promise<{ fingerprint: string; entries: Map<string, { type: string; length: number; sha256: string }> }>>} */
   const fingerprintCache = new Map()
   /** @type {Array<{ name: string; parentDir: string; kind: 'regular' | 'optional' | 'peer' }>} */
   const queue = []
+  const enqueueDependencies = (packageManifest, resolutionParentDir) => {
+    const optionalDeps = new Set(Object.keys(packageManifest.optionalDependencies ?? {}))
+    for (const dep of Object.keys(packageManifest.dependencies ?? {})) {
+      if (!optionalDeps.has(dep)) queue.push({ name: dep, parentDir: resolutionParentDir, kind: 'regular' })
+    }
+    for (const dep of optionalDeps) queue.push({ name: dep, parentDir: resolutionParentDir, kind: 'optional' })
+    for (const dep of Object.keys(packageManifest.peerDependencies ?? {})) {
+      if (packageManifest.peerDependenciesMeta?.[dep]?.optional !== true) {
+        queue.push({ name: dep, parentDir: resolutionParentDir, kind: 'peer' })
+      }
+    }
+  }
+
+  /**
+   * Canonicalize a configured registry .pnpm resolution to the already-deployed
+   * staging copy before it can enter the closure or enqueue dependencies. This
+   * keeps traversal order from leaking dependencies from the non-authoritative
+   * post-deploy source tree. Workspace/file/link packages are excluded because
+   * their locators do not satisfy isConfiguredRegistryPnpmPackage, and a staged
+   * package with a validated workspace source context is also excluded.
+   * @param {string} name
+   * @param {{ dir: string; realDir: string; copy: boolean }} resolved
+   */
+  const canonicalizeRegistryResolution = async (name, resolved) => {
+    if (!resolved.copy) return resolved
+
+    let resolvedManifest
+    try {
+      resolvedManifest = JSON.parse(await readFile(join(resolved.dir, 'package.json'), 'utf8'))
+    } catch {
+      return resolved
+    }
+    if (
+      resolvedManifest.name !== name
+      || typeof resolvedManifest.version !== 'string'
+      || !isConfiguredRegistryPnpmPackage(
+        resolved.realDir,
+        name,
+        resolvedManifest.version,
+        sourceDirs,
+        workspaceRootDir,
+      )
+    ) {
+      return resolved
+    }
+
+    const stagingPath = join(stagingNodeModules, name)
+    if (!(await pathExists(stagingPath))) return resolved
+    const stagingRealDir = await safeRealpath(stagingPath)
+    let stagingManifest
+    try {
+      stagingManifest = JSON.parse(await readFile(join(stagingPath, 'package.json'), 'utf8'))
+    } catch {
+      return resolved
+    }
+    if (
+      stagingManifest.name !== name
+      || stagingManifest.version !== resolvedManifest.version
+    ) {
+      return resolved
+    }
+
+    const stagingResolved = { dir: stagingPath, realDir: stagingRealDir, copy: false }
+    const stagingSourceContext = await sourceResolutionContext(
+      stagingResolved,
+      stagingManifest,
+      sourceDirs,
+      workspaceRootDir,
+    )
+    return stagingSourceContext === undefined ? stagingResolved : resolved
+  }
   const rootOptionalDeps = new Set(Object.keys(manifest.optionalDependencies ?? {}))
   for (const name of Object.keys(manifest.dependencies ?? {})) {
     if (!rootOptionalDeps.has(name)) {
@@ -740,16 +846,20 @@ async function buildClosure(staging, sourceNodeModules, fallbackNodeModules) {
     const { name, parentDir, kind } = queue.shift()
 
     const isRootDependency = parentDir === staging
-    const resolved = await resolvePackageDir(name, parentDir, stagingNodeModules, sourceDirs, workspaceRootDir, isRootDependency)
+    let resolved = await resolvePackageDir(name, parentDir, stagingNodeModules, sourceDirs, workspaceRootDir, isRootDependency)
     if (resolved === undefined) {
       if (kind === 'optional') continue
       throw new Error(`dependency ${name} not found in staging or source node_modules`)
     }
+    resolved = await canonicalizeRegistryResolution(name, resolved)
 
     const existing = closure.get(name)
     if (existing !== undefined) {
       if (existing.realDir !== resolved.realDir) {
         const resolvedManifest = JSON.parse(await readFile(join(resolved.dir, 'package.json'), 'utf8'))
+        if (resolvedManifest.name !== name) {
+          throw new Error(`dependency ${name} resolved to manifest for ${String(resolvedManifest.name)}`)
+        }
         const resolvedSourceContext = await sourceResolutionContext(
           resolved,
           resolvedManifest,
@@ -782,6 +892,9 @@ async function buildClosure(staging, sourceNodeModules, fallbackNodeModules) {
     }
 
     const packageManifest = JSON.parse(await readFile(join(resolved.dir, 'package.json'), 'utf8'))
+    if (packageManifest.name !== name) {
+      throw new Error(`dependency ${name} resolved to manifest for ${String(packageManifest.name)}`)
+    }
     // Prefer the source package's real directory as the resolution context for
     // children, because a hoisted staging copy may be a shallow real directory
     // that has lost the original pnpm/workspace link context.
@@ -791,26 +904,14 @@ async function buildClosure(staging, sourceNodeModules, fallbackNodeModules) {
       sourceDirs,
       workspaceRootDir,
     )
-    closure.set(name, { ...resolved, sourceContextDir })
+    closure.set(name, {
+      ...resolved,
+      sourceContextDir,
+      version: typeof packageManifest.version === 'string' ? packageManifest.version : undefined,
+    })
 
     const resolutionParentDir = sourceContextDir ?? resolved.realDir
-    const optionalDeps = new Set(Object.keys(packageManifest.optionalDependencies ?? {}))
-    // npm semantics: a name present in both dependencies and optionalDependencies
-    // is treated as optional, so exclude it from the regular queue.
-    for (const dep of Object.keys(packageManifest.dependencies ?? {})) {
-      if (!optionalDeps.has(dep)) {
-        queue.push({ name: dep, parentDir: resolutionParentDir, kind: 'regular' })
-      }
-    }
-    for (const dep of optionalDeps) {
-      queue.push({ name: dep, parentDir: resolutionParentDir, kind: 'optional' })
-    }
-    for (const dep of Object.keys(packageManifest.peerDependencies ?? {})) {
-      const meta = packageManifest.peerDependenciesMeta?.[dep]
-      if (meta?.optional !== true) {
-        queue.push({ name: dep, parentDir: resolutionParentDir, kind: 'peer' })
-      }
-    }
+    enqueueDependencies(packageManifest, resolutionParentDir)
   }
 
   return closure

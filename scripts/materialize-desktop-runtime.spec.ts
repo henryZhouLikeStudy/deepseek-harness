@@ -34,6 +34,8 @@ function runMaskedPnpmAliasFixture(
     stagingPackage: string
     pnpmPackage: string
   }) => void,
+  includeRootPackage = true,
+  useRegistryLocator = true,
 ) {
   const workspaceRoot = makeTemp('dsh-runtime-pnpm-fallback-workspace-root')
   const source = join(workspaceRoot, 'staging')
@@ -50,11 +52,14 @@ function runMaskedPnpmAliasFixture(
     writeJson(join(source, 'package.json'), {
       name: '@deepseek-ai/dsh',
       version: '9.5.0-test',
-      dependencies: { 'parent-pkg': '^1.0.0', 'js-yaml': '^4.2.0' },
+      dependencies: includeRootPackage
+        ? { 'parent-pkg': '^1.0.0', 'js-yaml': '^4.2.0' }
+        : { 'source-parent-pkg': '^1.0.0', 'parent-pkg': '^1.0.0' },
     })
 
     const pnpmStore = join(fallbackNodeModules, '.pnpm')
-    const pnpmPackage = join(pnpmStore, 'js-yaml@4.2.0', 'node_modules', 'js-yaml')
+    const pnpmLocator = useRegistryLocator ? 'js-yaml@4.2.0' : 'js-yaml@file+workspace-js-yaml'
+    const pnpmPackage = join(pnpmStore, pnpmLocator, 'node_modules', 'js-yaml')
     mkdirSync(pnpmPackage, { recursive: true })
     writeJson(join(pnpmPackage, 'package.json'), {
       name: 'js-yaml',
@@ -99,6 +104,30 @@ function runMaskedPnpmAliasFixture(
       exports: { '.': './index.mjs' },
     })
     writeFileSync(join(stagingPackage, 'index.mjs'), 'export const value = "yaml-ok";\n')
+
+    if (!includeRootPackage) {
+      const sourceParent = join(source, 'node_modules', 'source-parent-pkg')
+      mkdirSync(sourceParent, { recursive: true })
+      writeJson(join(sourceParent, 'package.json'), {
+        name: 'source-parent-pkg',
+        version: '1.0.0',
+        type: 'module',
+        dependencies: { 'js-yaml': '^4.2.0' },
+      })
+      writeFileSync(join(sourceParent, 'index.mjs'), 'export * from "js-yaml";\n')
+
+      const workspaceSourceParent = join(workspaceRoot, 'workspace-source-parent-pkg')
+      mkdirSync(join(workspaceSourceParent, 'node_modules'), { recursive: true })
+      writeJson(join(workspaceSourceParent, 'package.json'), {
+        name: 'source-parent-pkg',
+        version: '1.0.0',
+        type: 'module',
+        dependencies: { 'js-yaml': '^4.2.0' },
+      })
+      writeFileSync(join(workspaceSourceParent, 'index.mjs'), 'export * from "js-yaml";\n')
+      symlinkSync(pnpmPackage, join(workspaceSourceParent, 'node_modules', 'js-yaml'), 'junction')
+      symlinkSync(workspaceSourceParent, join(sourceNodeModules, 'source-parent-pkg'), 'junction')
+    }
 
     mkdirSync(join(source, 'node_modules', 'parent-pkg'), { recursive: true })
     writeJson(join(source, 'node_modules', 'parent-pkg', 'package.json'), {
@@ -937,6 +966,24 @@ describe('materialize-desktop-runtime.mjs', () => {
     expect(result.stdout).toContain('staged CLI smoke output: yaml-ok:yaml-ok')
   })
 
+  it('keeps an authoritative staged root dependency when a same-version pnpm payload differs', () => {
+    const result = runMaskedPnpmAliasFixture(({ pnpmPackage }) => {
+      writeFileSync(join(pnpmPackage, 'index.mjs'), 'export const value = "different-pnpm-payload";\n')
+    })
+
+    expect(result.status).toBe(0)
+    expect(result.stdout).toContain('staged CLI smoke output: yaml-ok:yaml-ok')
+  })
+
+  it('keeps an authoritative staged transitive registry package regardless of queue order', () => {
+    const result = runMaskedPnpmAliasFixture(({ pnpmPackage }) => {
+      writeFileSync(join(pnpmPackage, 'index.mjs'), 'export const value = "different-pnpm-payload";\n')
+    }, false)
+
+    expect(result.status).toBe(0)
+    expect(result.stdout).toContain('staged CLI smoke output: yaml-ok:yaml-ok')
+  })
+
   it('rejects non-whitelisted generated-looking payload differences', () => {
     let sensitivePaths: string[] = []
     const result = runMaskedPnpmAliasFixture(({ workspaceRoot, stagingPackage, pnpmPackage }) => {
@@ -944,7 +991,7 @@ describe('materialize-desktop-runtime.mjs', () => {
       mkdirSync(join(stagingPackage, 'lib'), { recursive: true })
       mkdirSync(join(pnpmPackage, 'lib'), { recursive: true })
       writeFileSync(join(pnpmPackage, 'lib', 'other_proxy.tmp.mjs'), 'unexpected payload\n')
-    })
+    }, false, false)
 
     expect(result.status).not.toBe(0)
     expect(result.stderr).toContain('conflicting realpaths')
@@ -969,7 +1016,7 @@ describe('materialize-desktop-runtime.mjs', () => {
       mkdirSync(join(pnpmPackage, relativeTarget), { recursive: true })
       symlinkSync(relativeTarget, join(stagingPackage, 'payload-link'), 'dir')
       symlinkSync(relativeTarget, join(pnpmPackage, 'payload-link'), 'dir')
-    })
+    }, false, false)
 
     expect(result.status).not.toBe(0)
     expect(result.stderr).toContain('conflicting realpaths')
@@ -981,7 +1028,7 @@ describe('materialize-desktop-runtime.mjs', () => {
       const result = runMaskedPnpmAliasFixture(({ stagingPackage, pnpmPackage }) => {
         symlinkSync(externalTarget, join(stagingPackage, 'payload-link'), process.platform === 'win32' ? 'junction' : 'dir')
         symlinkSync(externalTarget, join(pnpmPackage, 'payload-link'), process.platform === 'win32' ? 'junction' : 'dir')
-      })
+      }, false, false)
 
       expect(result.status).not.toBe(0)
       expect(result.stderr).toContain('conflicting realpaths')
@@ -1007,8 +1054,19 @@ describe('materialize-desktop-runtime.mjs', () => {
       writeJson(join(source, 'package.json'), {
         name: '@deepseek-ai/dsh',
         version: '9.6.0-test',
-        dependencies: { 'parent-pkg': '^1.0.0', 'js-yaml': '^4.2.0' },
+        dependencies: { 'source-parent-pkg': '^1.0.0', 'parent-pkg': '^1.0.0' },
       })
+
+      // Reach the staging js-yaml copy transitively, so neither conflicting
+      // package is an authoritative direct dependency of the staged root.
+      mkdirSync(join(source, 'node_modules', 'source-parent-pkg'), { recursive: true })
+      writeJson(join(source, 'node_modules', 'source-parent-pkg', 'package.json'), {
+        name: 'source-parent-pkg',
+        version: '1.0.0',
+        type: 'module',
+        dependencies: { 'js-yaml': '^4.2.0' },
+      })
+      writeFileSync(join(source, 'node_modules', 'source-parent-pkg', 'index.mjs'), 'export * from "js-yaml";\n')
 
       // The explicit source root has a real-directory copy of js-yaml v4.2.0.
       mkdirSync(join(sourceNodeModules, 'js-yaml'), { recursive: true })
@@ -1020,9 +1078,10 @@ describe('materialize-desktop-runtime.mjs', () => {
       })
       writeFileSync(join(sourceNodeModules, 'js-yaml', 'index.mjs'), 'export const value = "source-root";\n')
 
-      // The fallback root exposes the same version through a pnpm-store junction.
+      // The fallback root exposes the same version through a file locator. It
+      // must not be treated as an authoritative registry package.
       const pnpmStore = join(fallbackNodeModules, '.pnpm')
-      const jsYamlStore = join(pnpmStore, 'js-yaml@4.2.0', 'node_modules', 'js-yaml')
+      const jsYamlStore = join(pnpmStore, 'js-yaml@file+fallback-js-yaml', 'node_modules', 'js-yaml')
       mkdirSync(jsYamlStore, { recursive: true })
       writeJson(join(jsYamlStore, 'package.json'), {
         name: 'js-yaml',
@@ -1032,6 +1091,18 @@ describe('materialize-desktop-runtime.mjs', () => {
       })
       writeFileSync(join(jsYamlStore, 'index.mjs'), 'export const value = "fallback-root";\n')
       symlinkSync(jsYamlStore, join(fallbackNodeModules, 'js-yaml'), 'junction')
+
+      const workspaceSourceParent = join(workspaceRoot, 'workspace-source-parent-pkg')
+      mkdirSync(join(workspaceSourceParent, 'node_modules'), { recursive: true })
+      writeJson(join(workspaceSourceParent, 'package.json'), {
+        name: 'source-parent-pkg',
+        version: '1.0.0',
+        type: 'module',
+        dependencies: { 'js-yaml': '^4.2.0' },
+      })
+      writeFileSync(join(workspaceSourceParent, 'index.mjs'), 'export * from "js-yaml";\n')
+      symlinkSync(jsYamlStore, join(workspaceSourceParent, 'node_modules', 'js-yaml'), 'junction')
+      symlinkSync(workspaceSourceParent, join(sourceNodeModules, 'source-parent-pkg'), 'junction')
 
       const parentPkgStore = join(pnpmStore, 'parent-pkg@1.0.0', 'node_modules', 'parent-pkg')
       mkdirSync(parentPkgStore, { recursive: true })
