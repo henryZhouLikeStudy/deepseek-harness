@@ -37,6 +37,7 @@ import { dirname, relative, resolve, join, sep } from 'node:path'
 const REQUIRED_ROOT_ENTRIES = ['package.json', 'lib', 'config', 'node_modules']
 const COPY_CONCURRENCY = 64
 const GENERATED_PACKAGE_ARTIFACTS = new Set(['lib/index_vite_proxy.tmp.mjs'])
+const PAYLOAD_DIAGNOSTIC_LIMIT = 8
 
 function usage() {
   return 'Usage: node scripts/materialize-desktop-runtime.mjs --from <staging-dir> --to <runtime-dir> --source-node-modules <source-node-modules> [--fallback-node-modules <fallback-node-modules>] [--smoke-command <smoke-command>]'
@@ -548,8 +549,8 @@ function isConfiguredPnpmStorePackage(realDir, sourceDirs, workspaceRootDir) {
  * separately. Symlinks are recorded without following them.
  * @param {string} realDir
  * @param {string} workspaceRootDir
- * @param {Map<string, Promise<string>>} cache
- * @returns {Promise<string>}
+ * @param {Map<string, Promise<{ fingerprint: string; entries: Map<string, { type: string; length: number; sha256: string }> }>>} cache
+ * @returns {Promise<{ fingerprint: string; entries: Map<string, { type: string; length: number; sha256: string }> }>}
  */
 async function packagePayloadFingerprint(realDir, workspaceRootDir, cache) {
   const cached = cache.get(realDir)
@@ -561,12 +562,14 @@ async function packagePayloadFingerprint(realDir, workspaceRootDir, cache) {
     }
 
     const hash = createHash('sha256')
+    /** @type {Map<string, { type: string; length: number; sha256: string }>} */
+    const payloadEntries = new Map()
     /** @param {string} type @param {string} relativePath @param {Buffer | string | undefined} payload */
     const addEntry = (type, relativePath, payload) => {
       const content = payload === undefined ? Buffer.alloc(0) : Buffer.from(payload)
-      hash.update(JSON.stringify([type, relativePath, content.length]))
-      hash.update('\0')
-      hash.update(content)
+      const sha256 = createHash('sha256').update(content).digest('hex')
+      payloadEntries.set(relativePath, { type, length: content.length, sha256 })
+      hash.update(JSON.stringify([type, relativePath, content.length, sha256]))
     }
 
     /** @param {string} dir @param {string[]} segments */
@@ -599,10 +602,46 @@ async function packagePayloadFingerprint(realDir, workspaceRootDir, cache) {
     }
 
     await walk(realDir, [])
-    return hash.digest('hex')
+    return { fingerprint: hash.digest('hex'), entries: payloadEntries }
   })()
   cache.set(realDir, fingerprint)
   return fingerprint
+}
+
+/**
+ * Format the first normalized package payload differences without exposing
+ * file contents, symlink text, or absolute paths.
+ * @param {Map<string, { type: string; length: number; sha256: string }>} stagingEntries
+ * @param {Map<string, { type: string; length: number; sha256: string }>} pnpmEntries
+ * @returns {string[]}
+ */
+function describePayloadDifferences(stagingEntries, pnpmEntries) {
+  const paths = [...new Set([...stagingEntries.keys(), ...pnpmEntries.keys()])]
+    .sort((left, right) => left < right ? -1 : left > right ? 1 : 0)
+  const differences = []
+  let total = 0
+  for (const path of paths) {
+    const staging = stagingEntries.get(path)
+    const pnpm = pnpmEntries.get(path)
+    if (
+      staging?.type === pnpm?.type
+      && staging?.length === pnpm?.length
+      && staging?.sha256 === pnpm?.sha256
+    ) {
+      continue
+    }
+    total += 1
+    if (differences.length >= PAYLOAD_DIAGNOSTIC_LIMIT) continue
+    const stagingDescription = staging === undefined
+      ? 'missing'
+      : `${staging.type},length=${staging.length},sha256=${staging.sha256}`
+    const pnpmDescription = pnpm === undefined
+      ? 'missing'
+      : `${pnpm.type},length=${pnpm.length},sha256=${pnpm.sha256}`
+    differences.push(`${path}: staging(${stagingDescription}) pnpm(${pnpmDescription})`)
+  }
+  if (total > differences.length) differences.push(`... ${total - differences.length} more differences`)
+  return differences
 }
 
 /**
@@ -614,8 +653,8 @@ async function packagePayloadFingerprint(realDir, workspaceRootDir, cache) {
  * @param {string} stagingNodeModules
  * @param {string[]} sourceDirs
  * @param {string} workspaceRootDir
- * @param {Map<string, Promise<string>>} fingerprintCache
- * @returns {Promise<boolean>}
+ * @param {Map<string, Promise<{ fingerprint: string; entries: Map<string, { type: string; length: number; sha256: string }> }>>} fingerprintCache
+ * @returns {Promise<{ equivalent: boolean; differences: string[] }>}
  */
 async function haveEquivalentStagingAndPnpmPayloads(
   packageName,
@@ -636,17 +675,21 @@ async function haveEquivalentStagingAndPnpmPayloads(
     stagingPackage = right
     pnpmPackage = left
   } else {
-    return false
+    return { equivalent: false, differences: [] }
   }
 
   try {
-    const [stagingFingerprint, pnpmFingerprint] = await Promise.all([
+    const [stagingPayload, pnpmPayload] = await Promise.all([
       packagePayloadFingerprint(stagingPackage.realDir, workspaceRootDir, fingerprintCache),
       packagePayloadFingerprint(pnpmPackage.realDir, workspaceRootDir, fingerprintCache),
     ])
-    return stagingFingerprint === pnpmFingerprint
+    const equivalent = stagingPayload.fingerprint === pnpmPayload.fingerprint
+    return {
+      equivalent,
+      differences: equivalent ? [] : describePayloadDifferences(stagingPayload.entries, pnpmPayload.entries),
+    }
   } catch {
-    return false
+    return { equivalent: false, differences: [] }
   }
 }
 
@@ -673,7 +716,7 @@ async function buildClosure(staging, sourceNodeModules, fallbackNodeModules) {
 
   /** @type {Map<string, { dir: string; realDir: string; copy: boolean; sourceContextDir: string | undefined }>} */
   const closure = new Map()
-  /** @type {Map<string, Promise<string>>} */
+  /** @type {Map<string, Promise<{ fingerprint: string; entries: Map<string, { type: string; length: number; sha256: string }> }>>} */
   const fingerprintCache = new Map()
   /** @type {Array<{ name: string; parentDir: string; kind: 'regular' | 'optional' | 'peer' }>} */
   const queue = []
@@ -715,8 +758,8 @@ async function buildClosure(staging, sourceNodeModules, fallbackNodeModules) {
         )
         const equivalentBySourceContext = existing.sourceContextDir === resolved.realDir
           || resolvedSourceContext === existing.realDir
-        const equivalentByPayload = equivalentBySourceContext
-          ? false
+        const payloadComparison = equivalentBySourceContext
+          ? { equivalent: false, differences: [] }
           : await haveEquivalentStagingAndPnpmPayloads(
               name,
               existing,
@@ -726,9 +769,12 @@ async function buildClosure(staging, sourceNodeModules, fallbackNodeModules) {
               workspaceRootDir,
               fingerprintCache,
             )
-        if (!equivalentBySourceContext && !equivalentByPayload) {
+        if (!equivalentBySourceContext && !payloadComparison.equivalent) {
+          const diagnostics = payloadComparison.differences.length === 0
+            ? ''
+            : `; payload differences: ${payloadComparison.differences.join(' | ')}`
           throw new Error(
-            `dependency ${name} resolves to conflicting realpaths: ${existing.realDir} and ${resolved.realDir}`,
+            `dependency ${name} resolves to conflicting realpaths${diagnostics}`,
           )
         }
       }

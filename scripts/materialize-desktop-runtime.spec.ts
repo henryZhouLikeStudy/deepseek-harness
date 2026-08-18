@@ -938,7 +938,9 @@ describe('materialize-desktop-runtime.mjs', () => {
   })
 
   it('rejects non-whitelisted generated-looking payload differences', () => {
-    const result = runMaskedPnpmAliasFixture(({ stagingPackage, pnpmPackage }) => {
+    let sensitivePaths: string[] = []
+    const result = runMaskedPnpmAliasFixture(({ workspaceRoot, stagingPackage, pnpmPackage }) => {
+      sensitivePaths = [workspaceRoot, stagingPackage, pnpmPackage]
       mkdirSync(join(stagingPackage, 'lib'), { recursive: true })
       mkdirSync(join(pnpmPackage, 'lib'), { recursive: true })
       writeFileSync(join(pnpmPackage, 'lib', 'other_proxy.tmp.mjs'), 'unexpected payload\n')
@@ -946,6 +948,10 @@ describe('materialize-desktop-runtime.mjs', () => {
 
     expect(result.status).not.toBe(0)
     expect(result.stderr).toContain('conflicting realpaths')
+    expect(result.stderr).toContain('payload differences: lib/other_proxy.tmp.mjs')
+    expect(result.stderr).toMatch(/pnpm\(file,length=\d+,sha256=[0-9a-f]{64}\)/)
+    expect(result.stderr).not.toContain('unexpected payload')
+    for (const path of sensitivePaths) expect(result.stderr).not.toContain(path)
   })
 
   it('rejects matching link text whose targets escape their package roots', () => {
@@ -979,6 +985,7 @@ describe('materialize-desktop-runtime.mjs', () => {
 
       expect(result.status).not.toBe(0)
       expect(result.stderr).toContain('conflicting realpaths')
+      expect(result.stderr).not.toContain(externalTarget)
     } finally {
       rmSync(externalTarget, { recursive: true, force: true })
     }
