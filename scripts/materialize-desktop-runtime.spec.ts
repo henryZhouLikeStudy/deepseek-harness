@@ -158,6 +158,106 @@ function runMaskedPnpmAliasFixture(
 }
 
 describe('materialize-desktop-runtime.mjs', () => {
+  it('preserves a modern deploy multi-version closure while dereferencing links', () => {
+    const source = makeTemp('dsh-runtime-modern-source')
+    const sourceNodeModules = makeTemp('dsh-runtime-modern-source-node-modules')
+    const destination = makeTemp('dsh-runtime-modern-dest')
+
+    try {
+      mkdirSync(join(source, 'lib'), { recursive: true })
+      mkdirSync(join(source, 'config'), { recursive: true })
+      mkdirSync(join(source, 'node_modules', '.pnpm'), { recursive: true })
+      writeJson(join(source, 'package.json'), {
+        name: '@deepseek-ai/dsh',
+        version: '1.0.0-modern-test',
+        type: 'module',
+        dependencies: { chokidar: '4.0.3', 'parent-pkg': '1.0.0' },
+      })
+      writeFileSync(join(source, 'pnpm-lock.yaml'), 'lockfileVersion: "9.0"\n')
+
+      const chokidar4 = join(source, 'node_modules', '.pnpm', 'chokidar@4.0.3', 'node_modules', 'chokidar')
+      const chokidar5 = join(source, 'node_modules', '.pnpm', 'chokidar@5.0.0', 'node_modules', 'chokidar')
+      for (const [directory, version] of [[chokidar4, '4.0.3'], [chokidar5, '5.0.0']] as const) {
+        mkdirSync(directory, { recursive: true })
+        writeJson(join(directory, 'package.json'), {
+          name: 'chokidar',
+          version,
+          type: 'module',
+          exports: { '.': './index.mjs' },
+        })
+        writeFileSync(join(directory, 'index.mjs'), `export const version = "${version}";\n`)
+      }
+
+      const parentPkg = join(source, 'node_modules', '.pnpm', 'parent-pkg@1.0.0', 'node_modules', 'parent-pkg')
+      mkdirSync(join(parentPkg, 'node_modules'), { recursive: true })
+      writeJson(join(parentPkg, 'package.json'), {
+        name: 'parent-pkg',
+        version: '1.0.0',
+        type: 'module',
+        exports: { '.': './index.mjs' },
+        dependencies: { chokidar: '5.0.0' },
+      })
+      writeFileSync(join(parentPkg, 'index.mjs'), 'export { version } from "chokidar";\n')
+      symlinkSync(chokidar5, join(parentPkg, 'node_modules', 'chokidar'), 'junction')
+      symlinkSync(chokidar4, join(source, 'node_modules', 'chokidar'), 'junction')
+      symlinkSync(parentPkg, join(source, 'node_modules', 'parent-pkg'), 'junction')
+      writeFileSync(
+        join(source, 'lib', 'bin.js'),
+        'import { version as direct } from "chokidar"; import { version as nested } from "parent-pkg"; console.log(`${direct}:${nested}`);',
+      )
+
+      const result = spawnSync(
+        process.execPath,
+        buildBaseArgs(source, destination, sourceNodeModules),
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+      )
+
+      expect(result.status).toBe(0)
+      expect(result.stdout).toContain('using complete modern pnpm deploy closure')
+      expect(result.stdout).toContain('staged CLI smoke output: 4.0.3:5.0.0')
+      expect(isSymlink(join(destination, 'node_modules', 'chokidar'))).toBe(false)
+      expect(isSymlink(join(destination, 'node_modules', 'parent-pkg'))).toBe(false)
+      expect(isSymlink(join(destination, 'node_modules', 'parent-pkg', 'node_modules', 'chokidar'))).toBe(false)
+    } finally {
+      rmSync(source, { recursive: true, force: true })
+      rmSync(sourceNodeModules, { recursive: true, force: true })
+      rmSync(destination, { recursive: true, force: true })
+    }
+  })
+
+  it('does not treat a lockfile without a virtual store as a complete modern deploy', () => {
+    const source = makeTemp('dsh-runtime-lock-only-source')
+    const sourceNodeModules = makeTemp('dsh-runtime-lock-only-source-node-modules')
+    const destination = makeTemp('dsh-runtime-lock-only-dest')
+
+    try {
+      mkdirSync(join(source, 'lib'), { recursive: true })
+      mkdirSync(join(source, 'config'), { recursive: true })
+      mkdirSync(join(source, 'node_modules'), { recursive: true })
+      writeJson(join(source, 'package.json'), {
+        name: '@deepseek-ai/dsh',
+        version: '1.0.0-lock-only-test',
+        dependencies: { 'missing-pkg': '1.0.0' },
+      })
+      writeFileSync(join(source, 'pnpm-lock.yaml'), 'lockfileVersion: "9.0"\n')
+      writeFileSync(join(source, 'lib', 'bin.js'), 'console.log("must-not-run");\n')
+
+      const result = spawnSync(
+        process.execPath,
+        buildBaseArgs(source, destination, sourceNodeModules),
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+      )
+
+      expect(result.status).not.toBe(0)
+      expect(result.stdout).not.toContain('using complete modern pnpm deploy closure')
+      expect(result.stderr).toContain('missing-pkg not found')
+    } finally {
+      rmSync(source, { recursive: true, force: true })
+      rmSync(sourceNodeModules, { recursive: true, force: true })
+      rmSync(destination, { recursive: true, force: true })
+    }
+  })
+
   it('dereferences symlinks and verifies the staged CLI', () => {
     const source = makeTemp('dsh-runtime-source')
     const sourceNodeModules = makeTemp('dsh-runtime-source-node-modules')

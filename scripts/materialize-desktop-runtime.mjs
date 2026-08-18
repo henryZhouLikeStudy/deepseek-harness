@@ -2,7 +2,9 @@
 /**
  * Materialize a pnpm-deployed dsh runtime into a self-contained, relocatable tree.
  *
- * `pnpm deploy --legacy` leaves symlinks/junctions that point outside the target
+ * Modern `pnpm deploy` includes its complete multi-version closure in a local
+ * virtual store. That layout is copied as-is while dereferencing links. Legacy
+ * deploy layouts leave symlinks/junctions that point outside the target
  * directory (workspace links, vendor overrides, .pnpm virtual-store entries) and
  * may contain cyclic peer-dependency symlinks. It can also omit transitive
  * workspace packages from the staging root, leaving them only in the source
@@ -975,12 +977,29 @@ async function restoreClosure(staging, sourceNodeModules, fallbackNodeModules) {
   }
 }
 
+async function hasModernPnpmDeployLayout(staging) {
+  try {
+    const [lockfile, virtualStore] = await Promise.all([
+      lstat(join(staging, 'pnpm-lock.yaml')),
+      lstat(join(staging, 'node_modules', '.pnpm')),
+    ])
+    return lockfile.isFile() && virtualStore.isDirectory()
+  } catch (error) {
+    if (error.code === 'ENOENT') return false
+    throw error
+  }
+}
+
 async function materialize(from, to, sourceNodeModules, fallbackNodeModules, smokeCommand) {
   console.log(`[materialize] from: ${from}`)
   console.log(`[materialize]   to: ${to}`)
 
   await assertRequiredEntries(from)
-  await restoreClosure(from, sourceNodeModules, fallbackNodeModules)
+  if (await hasModernPnpmDeployLayout(from)) {
+    console.log('[materialize] using complete modern pnpm deploy closure')
+  } else {
+    await restoreClosure(from, sourceNodeModules, fallbackNodeModules)
+  }
 
   if (await pathExists(to)) {
     console.log(`[materialize] removing existing destination`)
