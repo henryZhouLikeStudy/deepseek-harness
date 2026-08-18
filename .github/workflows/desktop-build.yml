@@ -33,7 +33,7 @@ jobs:
           node-version: ${{ env.PRIMARY_NODE_VERSION }}
 
       - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Build host and client libraries
         run: pnpm run build:lib
@@ -47,7 +47,7 @@ jobs:
           # self-contained. We keep the workspace-level setting disabled to
           # avoid stale copies and lock churn across the repo.
           pnpm_config_inject_workspace_packages: true
-        run: pnpm --config.node-linker=hoisted --config.link-workspace-packages=true --filter @deepseek-ai/dsh deploy --prod --legacy --ignore-scripts apps/desktop/dsh-runtime-staging
+        run: pnpm --frozen-lockfile --config.node-linker=hoisted --config.link-workspace-packages=true --filter @deepseek-ai/dsh deploy --prod --legacy --ignore-scripts apps/desktop/dsh-runtime-staging
 
       - name: Materialize dsh runtime
         run: node scripts/materialize-desktop-runtime.mjs --from apps/desktop/dsh-runtime-staging --to apps/desktop/dsh-runtime --source-node-modules apps/cli/node_modules --fallback-node-modules node_modules --smoke-command "web --help"

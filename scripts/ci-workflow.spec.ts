@@ -7,6 +7,19 @@ const root = resolve(import.meta.dirname, '..')
 const runnerPrivatePnpmDestination = '${{ runner.temp }}/setup-pnpm'
 
 describe('CI workflow', () => {
+  it('keeps the desktop runtime install and deploy on the committed lock snapshot', () => {
+    const workflow = loadWorkflow('.github/workflows/desktop-build.yml')
+    if (!isRecord(workflow.jobs) || !isRecord(workflow.jobs.build) || !Array.isArray(workflow.jobs.build.steps)) {
+      throw new TypeError('Desktop build workflow must define a build job with steps')
+    }
+    const commands = workflow.jobs.build.steps
+      .filter(isRecord)
+      .map(step => typeof step.run === 'string' ? step.run : '')
+    expect(commands).toContain('pnpm install --frozen-lockfile')
+    expect(commands.some(command => command.includes(' deploy ') && command.includes('--frozen-lockfile'))).toBe(true)
+    expect(commands.some(command => command.includes('--no-frozen-lockfile'))).toBe(false)
+  })
+
   it('isolates every pnpm action setup destination per runner', () => {
     const workflow: unknown = yaml.load(readFileSync(resolve(root, '.github/workflows/ci.yml'), 'utf8'))
     if (!isRecord(workflow) || !isRecord(workflow.jobs)) throw new TypeError('CI workflow must define jobs')
