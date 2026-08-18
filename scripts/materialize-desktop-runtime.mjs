@@ -36,6 +36,7 @@ import { dirname, relative, resolve, join, sep } from 'node:path'
 
 const REQUIRED_ROOT_ENTRIES = ['package.json', 'lib', 'config', 'node_modules']
 const COPY_CONCURRENCY = 64
+const GENERATED_PACKAGE_ARTIFACTS = new Set(['lib/index_vite_proxy.tmp.mjs'])
 
 function usage() {
   return 'Usage: node scripts/materialize-desktop-runtime.mjs --from <staging-dir> --to <runtime-dir> --source-node-modules <source-node-modules> [--fallback-node-modules <fallback-node-modules>] [--smoke-command <smoke-command>]'
@@ -576,6 +577,7 @@ async function packagePayloadFingerprint(realDir, workspaceRootDir, cache) {
         if (entry.name === 'node_modules') continue
         const childSegments = [...segments, entry.name]
         const relativePath = childSegments.join('/')
+        if (GENERATED_PACKAGE_ARTIFACTS.has(relativePath)) continue
         const child = join(dir, entry.name)
         const stat = await lstat(child)
         if (stat.isDirectory()) {
