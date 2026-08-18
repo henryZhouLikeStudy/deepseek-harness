@@ -15,8 +15,11 @@ describe('CI workflow', () => {
     const commands = workflow.jobs.build.steps
       .filter(isRecord)
       .map(step => typeof step.run === 'string' ? step.run : '')
+    const deployCommands = commands.filter(command => command.includes(' deploy '))
     expect(commands).toContain('pnpm install --frozen-lockfile')
-    expect(commands.some(command => command.includes(' deploy ') && command.includes('--frozen-lockfile'))).toBe(true)
+    expect(deployCommands).toHaveLength(1)
+    expect(deployCommands[0]).toContain('--frozen-lockfile')
+    expect(deployCommands[0]).toContain('--offline')
     expect(commands.some(command => command.includes('--no-frozen-lockfile'))).toBe(false)
   })
 
