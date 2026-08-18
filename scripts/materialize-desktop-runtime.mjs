@@ -19,6 +19,7 @@
  */
 
 import { spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import {
   cp,
   lstat,
@@ -26,11 +27,12 @@ import {
   mkdir,
   readdir,
   readFile,
+  readlink,
   realpath,
   rm,
 } from 'node:fs/promises'
 import { createRequire } from 'node:module'
-import { dirname, resolve, join, sep } from 'node:path'
+import { dirname, relative, resolve, join, sep } from 'node:path'
 
 const REQUIRED_ROOT_ENTRIES = ['package.json', 'lib', 'config', 'node_modules']
 const COPY_CONCURRENCY = 64
@@ -524,6 +526,129 @@ async function sourceResolutionContext(resolved, packageManifest, sourceDirs, wo
 }
 
 /**
+ * Return whether a package realpath is inside a pnpm virtual store belonging
+ * to one of the configured source node_modules directories.
+ * @param {string} realDir
+ * @param {string[]} sourceDirs
+ * @param {string} workspaceRootDir
+ * @returns {boolean}
+ */
+function isConfiguredPnpmStorePackage(realDir, sourceDirs, workspaceRootDir) {
+  if (!withinWorkspace(realDir, workspaceRootDir)) return false
+  return sourceDirs.some((sourceDir) => {
+    const storeDir = join(sourceDir, '.pnpm')
+    return withinWorkspace(storeDir, workspaceRootDir) && withinWorkspace(realDir, storeDir)
+  })
+}
+
+/**
+ * Compute a stable recursive fingerprint for a package payload. Nested
+ * node_modules trees are excluded because closure dependencies are compared
+ * separately. Symlinks are recorded without following them.
+ * @param {string} realDir
+ * @param {string} workspaceRootDir
+ * @param {Map<string, Promise<string>>} cache
+ * @returns {Promise<string>}
+ */
+async function packagePayloadFingerprint(realDir, workspaceRootDir, cache) {
+  const cached = cache.get(realDir)
+  if (cached !== undefined) return cached
+
+  const fingerprint = (async () => {
+    if (!withinWorkspace(realDir, workspaceRootDir)) {
+      throw new Error(`package payload is outside workspace: ${realDir}`)
+    }
+
+    const hash = createHash('sha256')
+    /** @param {string} type @param {string} relativePath @param {Buffer | string | undefined} payload */
+    const addEntry = (type, relativePath, payload) => {
+      const content = payload === undefined ? Buffer.alloc(0) : Buffer.from(payload)
+      hash.update(JSON.stringify([type, relativePath, content.length]))
+      hash.update('\0')
+      hash.update(content)
+    }
+
+    /** @param {string} dir @param {string[]} segments */
+    const walk = async (dir, segments) => {
+      const entries = await readdir(dir, { withFileTypes: true })
+      entries.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0)
+      for (const entry of entries) {
+        if (entry.name === 'node_modules') continue
+        const childSegments = [...segments, entry.name]
+        const relativePath = childSegments.join('/')
+        const child = join(dir, entry.name)
+        const stat = await lstat(child)
+        if (stat.isDirectory()) {
+          addEntry('directory', relativePath)
+          await walk(child, childSegments)
+        } else if (stat.isFile()) {
+          addEntry('file', relativePath, await readFile(child))
+        } else if (stat.isSymbolicLink()) {
+          const target = resolve(dirname(child), await readlink(child))
+          if (!withinWorkspace(target, realDir) || !withinWorkspace(target, workspaceRootDir)) {
+            throw new Error(`package symlink target is outside allowed roots: ${child}`)
+          }
+          const normalizedTarget = relative(realDir, target).split(sep).join('/') || '.'
+          addEntry('symlink', relativePath, normalizedTarget)
+        } else {
+          addEntry('other', relativePath)
+        }
+      }
+    }
+
+    await walk(realDir, [])
+    return hash.digest('hex')
+  })()
+  cache.set(realDir, fingerprint)
+  return fingerprint
+}
+
+/**
+ * Prove equivalence between a staging copy and a package reached through a
+ * configured pnpm virtual store by comparing their complete package payloads.
+ * @param {string} packageName
+ * @param {{ dir: string; realDir: string; copy: boolean }} left
+ * @param {{ dir: string; realDir: string; copy: boolean }} right
+ * @param {string} stagingNodeModules
+ * @param {string[]} sourceDirs
+ * @param {string} workspaceRootDir
+ * @param {Map<string, Promise<string>>} fingerprintCache
+ * @returns {Promise<boolean>}
+ */
+async function haveEquivalentStagingAndPnpmPayloads(
+  packageName,
+  left,
+  right,
+  stagingNodeModules,
+  sourceDirs,
+  workspaceRootDir,
+  fingerprintCache,
+) {
+  const stagingPath = join(stagingNodeModules, packageName)
+  let stagingPackage
+  let pnpmPackage
+  if (!left.copy && left.dir === stagingPath && isConfiguredPnpmStorePackage(right.realDir, sourceDirs, workspaceRootDir)) {
+    stagingPackage = left
+    pnpmPackage = right
+  } else if (!right.copy && right.dir === stagingPath && isConfiguredPnpmStorePackage(left.realDir, sourceDirs, workspaceRootDir)) {
+    stagingPackage = right
+    pnpmPackage = left
+  } else {
+    return false
+  }
+
+  try {
+    const [stagingFingerprint, pnpmFingerprint] = await Promise.all([
+      packagePayloadFingerprint(stagingPackage.realDir, workspaceRootDir, fingerprintCache),
+      packagePayloadFingerprint(pnpmPackage.realDir, workspaceRootDir, fingerprintCache),
+    ])
+    return stagingFingerprint === pnpmFingerprint
+  } catch {
+    return false
+  }
+}
+
+/**
  * Build the complete runtime dependency closure of the staged package:
  * regular dependencies, optional dependencies, and required peer dependencies.
  * Each dependency is resolved relative to its parent package's directory so
@@ -546,6 +671,8 @@ async function buildClosure(staging, sourceNodeModules, fallbackNodeModules) {
 
   /** @type {Map<string, { dir: string; realDir: string; copy: boolean; sourceContextDir: string | undefined }>} */
   const closure = new Map()
+  /** @type {Map<string, Promise<string>>} */
+  const fingerprintCache = new Map()
   /** @type {Array<{ name: string; parentDir: string; kind: 'regular' | 'optional' | 'peer' }>} */
   const queue = []
   const rootOptionalDeps = new Set(Object.keys(manifest.optionalDependencies ?? {}))
@@ -584,7 +711,20 @@ async function buildClosure(staging, sourceNodeModules, fallbackNodeModules) {
           sourceDirs,
           workspaceRootDir,
         )
-        if (existing.sourceContextDir !== resolved.realDir && resolvedSourceContext !== existing.realDir) {
+        const equivalentBySourceContext = existing.sourceContextDir === resolved.realDir
+          || resolvedSourceContext === existing.realDir
+        const equivalentByPayload = equivalentBySourceContext
+          ? false
+          : await haveEquivalentStagingAndPnpmPayloads(
+              name,
+              existing,
+              resolved,
+              stagingNodeModules,
+              sourceDirs,
+              workspaceRootDir,
+              fingerprintCache,
+            )
+        if (!equivalentBySourceContext && !equivalentByPayload) {
           throw new Error(
             `dependency ${name} resolves to conflicting realpaths: ${existing.realDir} and ${resolved.realDir}`,
           )
