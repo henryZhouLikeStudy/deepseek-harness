@@ -19,7 +19,8 @@ describe('CI workflow', () => {
     expect(commands).toContain('pnpm install --frozen-lockfile')
     expect(deployCommands).toHaveLength(1)
     expect(deployCommands[0]).toContain('--frozen-lockfile')
-    expect(deployCommands[0]).toContain('--offline')
+    expect(deployCommands[0]).not.toContain('--legacy')
+    expect(deployCommands[0]).not.toContain('--offline')
     expect(commands.some(command => command.includes('--no-frozen-lockfile'))).toBe(false)
   })
 
