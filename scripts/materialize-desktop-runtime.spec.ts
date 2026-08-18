@@ -21,9 +21,10 @@ function isSymlink(path: string) {
 }
 
 function buildBaseArgs(source: string, destination: string, sourceNodeModules: string, fallbackNodeModules?: string) {
-  const args = [SCRIPT, '--from', source, '--to', destination, '--source-node-modules', sourceNodeModules]
+  const cliPath = (value: string) => process.platform === 'win32' ? value.toLowerCase() : value
+  const args = [SCRIPT, '--from', cliPath(source), '--to', cliPath(destination), '--source-node-modules', cliPath(sourceNodeModules)]
   if (fallbackNodeModules !== undefined) {
-    args.push('--fallback-node-modules', fallbackNodeModules)
+    args.push('--fallback-node-modules', cliPath(fallbackNodeModules))
   }
   return args
 }
@@ -982,6 +983,79 @@ describe('materialize-desktop-runtime.mjs', () => {
 
     expect(result.status).toBe(0)
     expect(result.stdout).toContain('staged CLI smoke output: yaml-ok:yaml-ok')
+  })
+
+  it('canonicalizes an apps cli junction into the root pnpm registry store', () => {
+    const workspaceRoot = makeTemp('dsh-runtime-ci-registry-junction')
+    const source = join(workspaceRoot, 'staging')
+    const sourceNodeModules = join(workspaceRoot, 'apps', 'cli', 'node_modules')
+    const fallbackNodeModules = join(workspaceRoot, 'node_modules')
+    const destination = join(workspaceRoot, 'runtime')
+    try {
+      mkdirSync(sourceNodeModules, { recursive: true })
+      mkdirSync(join(source, 'lib'), { recursive: true })
+      mkdirSync(join(source, 'config'), { recursive: true })
+      mkdirSync(join(source, 'node_modules', 'parent-pkg'), { recursive: true })
+      mkdirSync(join(source, 'node_modules', 'js-yaml'), { recursive: true })
+      writeJson(join(source, 'package.json'), {
+        name: '@deepseek-ai/dsh',
+        version: '9.7.0-test',
+        dependencies: { 'parent-pkg': '^1.0.0', 'js-yaml': '^4.2.0' },
+      })
+      writeJson(join(source, 'node_modules', 'parent-pkg', 'package.json'), {
+        name: 'parent-pkg',
+        version: '1.0.0',
+        type: 'module',
+        exports: { '.': './index.mjs' },
+        dependencies: { 'js-yaml': '^4.2.0' },
+      })
+      writeFileSync(join(source, 'node_modules', 'parent-pkg', 'index.mjs'), 'export * from "js-yaml";\n')
+      writeJson(join(source, 'node_modules', 'js-yaml', 'package.json'), {
+        name: 'js-yaml',
+        version: '4.2.0',
+        type: 'module',
+        exports: { '.': './index.mjs' },
+      })
+      writeFileSync(join(source, 'node_modules', 'js-yaml', 'index.mjs'), 'export const value = "staging";\n')
+
+      const pnpmPackage = join(fallbackNodeModules, '.pnpm', 'js-yaml@4.2.0', 'node_modules', 'js-yaml')
+      mkdirSync(pnpmPackage, { recursive: true })
+      writeJson(join(pnpmPackage, 'package.json'), {
+        name: 'js-yaml',
+        version: '4.2.0',
+        type: 'module',
+        exports: { '.': './index.mjs' },
+      })
+      writeFileSync(join(pnpmPackage, 'index.mjs'), 'export const value = "root-pnpm";\n')
+      symlinkSync(pnpmPackage, join(sourceNodeModules, 'js-yaml'), 'junction')
+
+      const workspaceParent = join(workspaceRoot, 'packages', 'parent-pkg')
+      mkdirSync(join(workspaceParent, 'node_modules'), { recursive: true })
+      writeJson(join(workspaceParent, 'package.json'), {
+        name: 'parent-pkg',
+        version: '1.0.0',
+        type: 'module',
+        exports: { '.': './index.mjs' },
+        dependencies: { 'js-yaml': '^4.2.0' },
+      })
+      writeFileSync(join(workspaceParent, 'index.mjs'), 'export * from "js-yaml";\n')
+      symlinkSync(join(sourceNodeModules, 'js-yaml'), join(workspaceParent, 'node_modules', 'js-yaml'), 'junction')
+      symlinkSync(workspaceParent, join(sourceNodeModules, 'parent-pkg'), 'junction')
+      writeFileSync(
+        join(source, 'lib', 'bin.js'),
+        'import { value as direct } from "js-yaml"; import { value as indirect } from "parent-pkg"; console.log(`${direct}:${indirect}`);',
+      )
+
+      const result = spawnSync(
+        process.execPath,
+        buildBaseArgs(source, destination, sourceNodeModules, fallbackNodeModules),
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+      )
+      expect(result.status, result.stderr).toBe(0)
+      expect(result.stdout).toContain('staged CLI smoke output: staging:staging')
+    } finally {
+      rmSync(workspaceRoot, { recursive: true, force: true })
+    }
   })
 
   it('rejects non-whitelisted generated-looking payload differences', () => {

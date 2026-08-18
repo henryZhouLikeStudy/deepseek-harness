@@ -307,12 +307,32 @@ function workspaceRoot(sourceNodeModules, fallbackNodeModules) {
 }
 
 /**
+ * Windows realpath may preserve a different casing than CLI arguments.
+ * @param {string} path
+ * @returns {string}
+ */
+function comparablePath(path) {
+  return process.platform === 'win32' ? path.toLowerCase() : path
+}
+
+/**
+ * @param {string} left
+ * @param {string} right
+ * @returns {boolean}
+ */
+function samePath(left, right) {
+  return comparablePath(left) === comparablePath(right)
+}
+
+/**
  * @param {string} path
  * @param {string} root
  * @returns {boolean}
  */
 function withinWorkspace(path, root) {
-  return path === root || path.startsWith(root + sep)
+  const comparablePathValue = comparablePath(path)
+  const comparableRoot = comparablePath(root)
+  return comparablePathValue === comparableRoot || comparablePathValue.startsWith(comparableRoot + sep)
 }
 
 /**
@@ -354,7 +374,7 @@ async function resolvePackageDir(packageName, parentDir, stagingNodeModules, sou
     if (await pathExists(candidate)) {
       const realDir = await safeRealpath(candidate)
       if (!withinWorkspace(realDir, workspaceRootDir)) continue
-      if (stagingExists && realDir === stagingRealDir) {
+      if (stagingExists && samePath(realDir, stagingRealDir)) {
         return { dir: stagingPath, realDir: stagingRealDir, copy: false }
       }
       return { dir: candidate, realDir, copy: true }
@@ -365,7 +385,7 @@ async function resolvePackageDir(packageName, parentDir, stagingNodeModules, sou
     const candidate = join(dir, packageName)
     if (await pathExists(candidate)) {
       const realDir = await safeRealpath(candidate)
-      if (stagingExists && realDir === stagingRealDir) {
+      if (stagingExists && samePath(realDir, stagingRealDir)) {
         return { dir: stagingPath, realDir: stagingRealDir, copy: false }
       }
       return { dir: candidate, realDir, copy: true }
@@ -703,10 +723,10 @@ async function haveEquivalentStagingAndPnpmPayloads(
   const stagingPath = join(stagingNodeModules, packageName)
   let stagingPackage
   let pnpmPackage
-  if (!left.copy && left.dir === stagingPath && isConfiguredPnpmStorePackage(right.realDir, sourceDirs, workspaceRootDir)) {
+  if (!left.copy && samePath(left.dir, stagingPath) && isConfiguredPnpmStorePackage(right.realDir, sourceDirs, workspaceRootDir)) {
     stagingPackage = left
     pnpmPackage = right
-  } else if (!right.copy && right.dir === stagingPath && isConfiguredPnpmStorePackage(left.realDir, sourceDirs, workspaceRootDir)) {
+  } else if (!right.copy && samePath(right.dir, stagingPath) && isConfiguredPnpmStorePackage(left.realDir, sourceDirs, workspaceRootDir)) {
     stagingPackage = right
     pnpmPackage = left
   } else {
@@ -855,7 +875,7 @@ async function buildClosure(staging, sourceNodeModules, fallbackNodeModules) {
 
     const existing = closure.get(name)
     if (existing !== undefined) {
-      if (existing.realDir !== resolved.realDir) {
+      if (!samePath(existing.realDir, resolved.realDir)) {
         const resolvedManifest = JSON.parse(await readFile(join(resolved.dir, 'package.json'), 'utf8'))
         if (resolvedManifest.name !== name) {
           throw new Error(`dependency ${name} resolved to manifest for ${String(resolvedManifest.name)}`)
@@ -866,8 +886,10 @@ async function buildClosure(staging, sourceNodeModules, fallbackNodeModules) {
           sourceDirs,
           workspaceRootDir,
         )
-        const equivalentBySourceContext = existing.sourceContextDir === resolved.realDir
-          || resolvedSourceContext === existing.realDir
+        const equivalentBySourceContext = existing.sourceContextDir !== undefined
+          && samePath(existing.sourceContextDir, resolved.realDir)
+          || resolvedSourceContext !== undefined
+            && samePath(resolvedSourceContext, existing.realDir)
         const payloadComparison = equivalentBySourceContext
           ? { equivalent: false, differences: [] }
           : await haveEquivalentStagingAndPnpmPayloads(
@@ -883,8 +905,9 @@ async function buildClosure(staging, sourceNodeModules, fallbackNodeModules) {
           const diagnostics = payloadComparison.differences.length === 0
             ? ''
             : `; payload differences: ${payloadComparison.differences.join(' | ')}`
+          const originDiagnostics = `; origins: existing(copy=${existing.copy},sourceContext=${existing.sourceContextDir === undefined ? 'none' : 'present'},version=${existing.version ?? 'unknown'}), resolved(copy=${resolved.copy},sourceContext=${resolvedSourceContext === undefined ? 'none' : 'present'},version=${resolvedManifest.version ?? 'unknown'})`
           throw new Error(
-            `dependency ${name} resolves to conflicting realpaths${diagnostics}`,
+            `dependency ${name} resolves to conflicting realpaths${diagnostics}${originDiagnostics}`,
           )
         }
       }
